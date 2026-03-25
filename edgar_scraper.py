@@ -136,7 +136,13 @@ def parse_filings(raw_hits: list[dict]) -> list[dict]:
     parsed = []
     for hit in raw_hits:
         src = hit.get("_source", {})
-        cik = src.get("entity_id", "").lstrip("0") or src.get("file_num", "")
+         entity_id = src.get("entity_id", "")
+        if isinstance(entity_id, list):
+            entity_id = entity_id[0] if entity_id else ""
+        file_num = src.get("file_num", "")
+        if isinstance(file_num, list):
+            file_num = file_num[0] if file_num else ""
+        cik = str(entity_id).lstrip("0") or str(file_num)
         accession = src.get("accession_no", "")
         accession_path = accession.replace("-", "")
 
