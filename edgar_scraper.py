@@ -134,16 +134,25 @@ def get_offering_category(cik: str) -> str:
 
 def parse_filings(raw_hits: list[dict]) -> list[dict]:
     parsed = []
-    for hit in raw_hits:
+    for i, hit in enumerate(raw_hits):
         src = hit.get("_source", {})
+        if i == 0:
+            log.info("DEBUG first hit _source keys: %s", list(src.keys()))
+            log.info("DEBUG first hit _source: %s", src)
         accession = src.get("accession_no", "")
         accession_path = accession.replace("-", "")
+        # CIK is the first 10 digits of the accession number (e.g. 0001234567-25-000001)
         cik = accession.split("-")[0].lstrip("0") if accession else ""
 
+        # entity_name may be a list
+        entity_name = src.get("entity_name", "N/A")
+        if isinstance(entity_name, list):
+            entity_name = entity_name[0] if entity_name else "N/A"
 
         parsed.append(
             {
-                "company": src.get("entity_name", "N/A"),
+                "company": entity_name,
+
                 "cik": cik,
                 "accession": accession,
                 "file_date": src.get("file_date", ""),
