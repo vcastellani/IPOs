@@ -1,0 +1,41 @@
+name: Daily EDGAR EFFECT Scraper
+
+on:
+  schedule:
+    # 9:30 AM Eastern (13:30 UTC) on weekdays
+    - cron: '30 13 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'Override filing date (YYYY-MM-DD). Defaults to previous business day.'
+        required: false
+        default: ''
+
+jobs:
+  scrape-and-email:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run EDGAR scraper
+        env:
+          EDGAR_USER_AGENT: ${{ secrets.EDGAR_USER_AGENT }}
+          SMTP_HOST:     ${{ secrets.SMTP_HOST }}
+          SMTP_PORT:     ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_FROM:    ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO:      ${{ secrets.EMAIL_TO }}
+          EDGAR_DATE:    ${{ github.event.inputs.date }}
+        run: python edgar_scraper.py
