@@ -134,25 +134,24 @@ def get_offering_category(cik: str) -> str:
 
 def parse_filings(raw_hits: list[dict]) -> list[dict]:
     parsed = []
-    for i, hit in enumerate(raw_hits):
+    for hit in raw_hits:
         src = hit.get("_source", {})
-        if i == 0:
-            log.info("DEBUG first hit _source keys: %s", list(src.keys()))
-            log.info("DEBUG first hit _source: %s", src)
-        accession = src.get("accession_no", "")
-        accession_path = accession.replace("-", "")
-        # CIK is the first 10 digits of the accession number (e.g. 0001234567-25-000001)
-        cik = accession.split("-")[0].lstrip("0") if accession else ""
 
-        # entity_name may be a list
-        entity_name = src.get("entity_name", "N/A")
-        if isinstance(entity_name, list):
-            entity_name = entity_name[0] if entity_name else "N/A"
+        # display_names format: "Company Name  (TICKER)  (CIK 0001234567)"
+        display_names = src.get("display_names", [])
+        company = display_names[0].split("(")[0].strip() if display_names else "N/A"
+
+        # ciks is a list of zero-padded CIK strings
+        ciks = src.get("ciks", [])
+        cik = ciks[0].lstrip("0") if ciks else ""
+
+        # accession number is in 'adsh' field
+        accession = src.get("adsh", "")
+        accession_path = accession.replace("-", "")
 
         parsed.append(
             {
-                "company": entity_name,
-
+                "company": company,
                 "cik": cik,
                 "accession": accession,
                 "file_date": src.get("file_date", ""),
