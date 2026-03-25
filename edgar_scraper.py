@@ -136,7 +136,7 @@ def parse_filings(raw_hits: list[dict]) -> list[dict]:
     parsed = []
     for hit in raw_hits:
         src = hit.get("_source", {})
-         entity_id = src.get("entity_id", "")
+        entity_id = src.get("entity_id", "")
         if isinstance(entity_id, list):
             entity_id = entity_id[0] if entity_id else ""
         file_num = src.get("file_num", "")
