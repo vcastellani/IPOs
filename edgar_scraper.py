@@ -114,6 +114,9 @@ def get_company_info(cik: str) -> dict:
         dates = recent.get("filingDate", [])
 
         first_filing_date = dates[-1] if dates else ""
+        
+        effect_count = forms.count("EFFECT")
+        is_first_effect = effect_count <= 1
 
         category = "Other"
         for form in forms:
@@ -127,13 +130,13 @@ def get_company_info(cik: str) -> dict:
                 category = f"Other ({form})"
                 break
 
-        return {"first_filing_date": first_filing_date, "category": category}
+        return {"first_filing_date": first_filing_date, "category": category, "is_first_effect": is_first_effect}
     except requests.HTTPError as exc:
         log.warning("HTTP error fetching submissions for CIK %s: %s", cik, exc)
-        return {"first_filing_date": "", "category": "Unknown"}
+        return {"first_filing_date": "", "category": "Unknown", "is_first_effect": False}
     except Exception as exc:
         log.warning("Error fetching submissions for CIK %s: %s", cik, exc)
-        return {"first_filing_date": "", "category": "Unknown"}
+        return {"first_filing_date": "", "category": "Unknown", "is_first_effect": False}
     finally:
         time.sleep(0.15)
 
@@ -162,6 +165,7 @@ def parse_filings(raw_hits: list[dict]) -> list[dict]:
                 "cik": cik,
                 "accession": accession,
                 "file_date": src.get("file_date", ""),
+                "is_first_effect": False,
                 "first_filing_date": "",
                 "filing_url": (
                     f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_path}/"
@@ -316,9 +320,11 @@ def main() -> None:
             info = get_company_info(f["cik"])
             f["category"] = info["category"]
             f["first_filing_date"] = info["first_filing_date"]
+            f["is_first_effect"] = info["is_first_effect"]
         else:
             f["category"] = "Unknown"
             f["first_filing_date"] = ""
+            f["is_first_effect"] = False
         log.info("  %s -> %s (first filing: %s)", f["company"], f["category"], f["first_filing_date"])
 
 
