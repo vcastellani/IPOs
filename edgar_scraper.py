@@ -114,7 +114,9 @@ def get_company_info(cik: str) -> dict:
         dates = recent.get("filingDate", [])
 
         first_filing_date = dates[-1] if dates else ""
-        
+
+        # Count prior EFFECT filings; <= 1 means this is the first
+        # (0 if current filing hasn't propagated to history yet, 1 if it has)
         effect_count = forms.count("EFFECT")
         is_first_effect = effect_count <= 1
 
@@ -141,7 +143,6 @@ def get_company_info(cik: str) -> dict:
         time.sleep(0.15)
 
 
-
 def parse_filings(raw_hits: list[dict]) -> list[dict]:
     parsed = []
     for hit in raw_hits:
@@ -165,8 +166,8 @@ def parse_filings(raw_hits: list[dict]) -> list[dict]:
                 "cik": cik,
                 "accession": accession,
                 "file_date": src.get("file_date", ""),
-                "is_first_effect": False,
                 "first_filing_date": "",
+                "is_first_effect": False,
                 "filing_url": (
                     f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_path}/"
                     if cik and accession_path
@@ -200,6 +201,7 @@ def build_html_email(filings: list[dict], filing_date: date) -> str:
         rows = ""
         for f in filings:
             color = CATEGORY_COLORS.get(f["category"], "#555555")
+            first_effect_cell = "Yes" if f["is_first_effect"] else "No"
             rows += f"""
             <tr>
               <td style="padding:8px 12px; border-bottom:1px solid #eee;">
@@ -217,6 +219,9 @@ def build_html_email(filings: list[dict], filing_date: date) -> str:
               <td style="padding:8px 12px; border-bottom:1px solid #eee; color:#555; font-size:12px;">
                 {f['first_filing_date']}
               </td>
+              <td style="padding:8px 12px; border-bottom:1px solid #eee; font-size:12px; font-weight:600;">
+                {first_effect_cell}
+              </td>
               <td style="padding:8px 12px; border-bottom:1px solid #eee;">
                 <a href="{f['filing_url']}" style="color:#1a56db; text-decoration:none; font-size:12px;">
                   {f['accession']}
@@ -232,8 +237,8 @@ def build_html_email(filings: list[dict], filing_date: date) -> str:
               <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">CIK</th>
               <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">Type</th>
               <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">First Filing</th>
+              <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">1st EFFECT?</th>
               <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">Accession #</th>
-
             </tr>
           </thead>
           <tbody>{rows}</tbody>
@@ -325,8 +330,10 @@ def main() -> None:
             f["category"] = "Unknown"
             f["first_filing_date"] = ""
             f["is_first_effect"] = False
-        log.info("  %s -> %s (first filing: %s)", f["company"], f["category"], f["first_filing_date"])
-
+        log.info(
+            "  %s -> %s (first filing: %s, first EFFECT: %s)",
+            f["company"], f["category"], f["first_filing_date"], f["is_first_effect"],
+        )
 
     category_order = {
         "IPO": 0,
@@ -345,6 +352,10 @@ def main() -> None:
     subject = f"EDGAR EFFECT Filings - {date_label} ({len(filings)} filing{'s' if len(filings) != 1 else ''})"
     html = build_html_email(filings, filing_date)
     send_email(subject, html)
+
+
+if __name__ == "__main__":
+    main()
 
 
 if __name__ == "__main__":
