@@ -210,6 +210,9 @@ def build_html_email(filings: list[dict], filing_date: date) -> str:
                   {f['category']}
                 </span>
               </td>
+              <td style="padding:8px 12px; border-bottom:1px solid #eee; color:#555; font-size:12px;">
+                {f['first_filing_date']}
+              </td>
               <td style="padding:8px 12px; border-bottom:1px solid #eee;">
                 <a href="{f['filing_url']}" style="color:#1a56db; text-decoration:none; font-size:12px;">
                   {f['accession']}
@@ -224,7 +227,9 @@ def build_html_email(filings: list[dict], filing_date: date) -> str:
               <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">Company</th>
               <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">CIK</th>
               <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">Type</th>
+              <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">First Filing</th>
               <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">Accession #</th>
+
             </tr>
           </thead>
           <tbody>{rows}</tbody>
