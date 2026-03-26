@@ -233,11 +233,11 @@ def build_html_email(filings: list[dict], filing_date: date) -> str:
         <table style="width:100%; border-collapse:collapse; font-size:14px;">
           <thead>
             <tr style="background:#f4f5f7;">
-              <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">Company</th>
+              <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">Company Name</th>
               <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">CIK</th>
               <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">Type</th>
               <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">First Filing</th>
-              <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">1st EFFECT?</th>
+              <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">First</th>
               <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">Accession #</th>
             </tr>
           </thead>
