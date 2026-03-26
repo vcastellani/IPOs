@@ -103,33 +103,40 @@ def fetch_effect_filings(filing_date: date) -> list[dict]:
     return filings
 
 
-def get_offering_category(cik: str) -> str:
+def get_company_info(cik: str) -> dict:
     url = EDGAR_SUBMISSIONS_URL.format(cik.zfill(10))
     try:
         resp = requests.get(url, headers=HEADERS, timeout=15)
         resp.raise_for_status()
         data = resp.json()
-        recent_forms: list[str] = (
-            data.get("filings", {}).get("recent", {}).get("form", [])
-        )
-        for form in recent_forms:
+        recent = data.get("filings", {}).get("recent", {})
+        forms = recent.get("form", [])
+        dates = recent.get("filingDate", [])
+
+        first_filing_date = dates[-1] if dates else ""
+
+        category = "Other"
+        for form in forms:
             if form == "EFFECT":
                 continue
-            category = FORM_CATEGORIES.get(form)
-            if category:
-                return category
+            cat = FORM_CATEGORIES.get(form)
+            if cat:
+                category = cat
+                break
             if form.startswith("S-") or form.startswith("F-"):
-                return f"Other ({form})"
-            break
-        return "Other"
+                category = f"Other ({form})"
+                break
+
+        return {"first_filing_date": first_filing_date, "category": category}
     except requests.HTTPError as exc:
         log.warning("HTTP error fetching submissions for CIK %s: %s", cik, exc)
-        return "Unknown"
+        return {"first_filing_date": "", "category": "Unknown"}
     except Exception as exc:
         log.warning("Error fetching submissions for CIK %s: %s", cik, exc)
-        return "Unknown"
+        return {"first_filing_date": "", "category": "Unknown"}
     finally:
         time.sleep(0.15)
+
 
 
 def parse_filings(raw_hits: list[dict]) -> list[dict]:
@@ -155,6 +162,7 @@ def parse_filings(raw_hits: list[dict]) -> list[dict]:
                 "cik": cik,
                 "accession": accession,
                 "file_date": src.get("file_date", ""),
+                "first_filing_date": "",
                 "filing_url": (
                     f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_path}/"
                     if cik and accession_path
@@ -300,10 +308,14 @@ def main() -> None:
     log.info("Enriching %d filings with offering category...", len(filings))
     for f in filings:
         if f["cik"]:
-            f["category"] = get_offering_category(f["cik"])
+            info = get_company_info(f["cik"])
+            f["category"] = info["category"]
+            f["first_filing_date"] = info["first_filing_date"]
         else:
             f["category"] = "Unknown"
-        log.info("  %s -> %s", f["company"], f["category"])
+            f["first_filing_date"] = ""
+        log.info("  %s -> %s (first filing: %s)", f["company"], f["category"], f["first_filing_date"])
+
 
     category_order = {
         "IPO": 0,
