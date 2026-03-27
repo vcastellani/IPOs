@@ -70,19 +70,31 @@ def fetch_effect_filings(filing_date: date) -> list[dict]:
     from_idx = 0
 
     while True:
-        resp = requests.get(
-            EDGAR_SEARCH_URL,
-            params={
-                "forms": "EFFECT",
-                "dateRange": "custom",
-                "startdt": date_str,
-                "enddt": date_str,
-                "from": from_idx,
-                "size": 100,
-            },
-            headers=HEADERS,
-            timeout=30,
-        )
+        # Retry up to 3 times on 5xx server errors
+        for attempt in range(3):
+            resp = requests.get(
+                EDGAR_SEARCH_URL,
+                params={
+                    "forms": "EFFECT",
+                    "dateRange": "custom",
+                    "startdt": date_str,
+                    "enddt": date_str,
+                    "from": from_idx,
+                    "size": 100,
+                },
+                headers=HEADERS,
+                timeout=30,
+            )
+            if resp.status_code < 500:
+                break
+            wait = 2 ** attempt
+            log.warning("EDGAR returned %d, retrying in %ds...", resp.status_code, wait)
+            time.sleep(wait)
+
+        if resp.status_code >= 500:
+            log.error("EDGAR search unavailable (HTTP %d) after retries — skipping.", resp.status_code)
+            return []
+
         resp.raise_for_status()
         data = resp.json()
 
