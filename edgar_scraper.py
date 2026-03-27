@@ -278,13 +278,12 @@ def build_html_email(filings: list[dict], filing_date: date) -> str:
         body = (
             make_table(
                 spacs,
-                "Suspected SPACs &#9733; (SIC 6770)",
-                "Blank check companies - likely SPAC IPOs or follow-on SPAC registrations.",
+                "Suspected SPAC Filings",
             )
             + ("<div style='margin:24px 0;border-top:2px solid #eee;'></div>" if spacs and others else "")
             + make_table(
                 others,
-                "All Other EFFECT Filings",
+                "All Other Filings",
                 "IPOs, follow-on offerings, shelf registrations, mergers, and other registration types.",
             )
         )
@@ -296,12 +295,11 @@ def build_html_email(filings: list[dict], filing_date: date) -> str:
         "<body style='font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:#f9fafb;margin:0;padding:0;'>"
         "<div style='max-width:900px;margin:32px auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.1);'>"
         "<div style='background:#1a3a6e;padding:24px 32px;color:#fff;'>"
-        "<h1 style='margin:0;font-size:20px;font-weight:700;'>EDGAR EFFECT Filings</h1>"
+        "<h1 style='margin:0;font-size:20px;font-weight:700;'>Daily EDGAR Filings</h1>"
         "<p style='margin:6px 0 0;opacity:0.85;font-size:14px;'>" + date_str + "</p>"
         "</div>"
         "<div style='padding:24px 32px;'>"
-        "<p style='color:#555;margin:0 0 8px;'><strong>" + filing_count_label + "</strong> found on EDGAR. "
-        "&#9733; = SIC 6770 (SPAC / Blank Check Company)</p>"
+        "<p style='color:#555;margin:0 0 8px;'><strong>" + filing_count_label + "</strong> found on EDGAR. </p>"
         + body +
         "</div>"
         "<div style='padding:16px 32px;background:#f4f5f7;font-size:12px;color:#888;'>"
