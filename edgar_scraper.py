@@ -279,6 +279,7 @@ def build_html_email(filings: list[dict], filing_date: date) -> str:
             make_table(
                 spacs,
                 "Suspected SPAC Filings",
+                "Blank check companies (SIC 6770) - likely SPAC IPOs or follow-on SPAC registrations.",
             )
             + ("<div style='margin:24px 0;border-top:2px solid #eee;'></div>" if spacs and others else "")
             + make_table(
