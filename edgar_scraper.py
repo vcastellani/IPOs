@@ -159,11 +159,14 @@ def parse_filings(raw_hits: list[dict]) -> list[dict]:
         # accession number is in 'adsh' field
         accession = src.get("adsh", "")
         accession_path = accession.replace("-", "")
+        sics = src.get("sics", [])
+        sic = sics[0] if sics else ""
 
         parsed.append(
             {
                 "company": company,
                 "cik": cik,
+                "sic": sic,
                 "accession": accession,
                 "file_date": src.get("file_date", ""),
                 "first_filing_date": "",
@@ -204,7 +207,8 @@ def build_html_email(filings: list[dict], filing_date: date) -> str:
             first_effect_cell = "Yes" if f["is_first_effect"] else "No"
             rows += f"""
             <tr>
-              <td style="padding:8px 12px; border-bottom:1px solid #eee;">
+              <td style="padding:8px 12px; border-bottom:1px solid #eee; color:#555;">{f['cik']}</td>
+              <td style="padding:8px 12px; border-bottom:1px solid #eee; color:#555; font-size:12px;">{f['sic']}</td>
                 <a href="{f['edgar_url']}" style="color:#1a56db; text-decoration:none; font-weight:600;">
                   {f['company']}
                 </a>
@@ -235,6 +239,7 @@ def build_html_email(filings: list[dict], filing_date: date) -> str:
             <tr style="background:#f4f5f7;">
               <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">Company Name</th>
               <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">CIK</th>
+              <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">SIC</th>
               <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">Type</th>
               <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">First Filing</th>
               <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">First</th>
