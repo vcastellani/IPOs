@@ -223,6 +223,7 @@ TABLE_HEADER = (
     "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>CIK</th>"
     "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>SIC</th>"
     "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>First Filing</th>"
+    "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>1st EFFECT</th>"
     "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>Accession #</th>"
     "</tr></thead><tbody>"
 )
@@ -230,12 +231,14 @@ TABLE_FOOTER = "</tbody></table>"
 
 
 def build_row(f: dict) -> str:
-    spac_bg = "background:#fff9e6;" if f["sic"] == "6770" else ""
     sic_style = "font-weight:700;color:#b8860b;" if f["sic"] == "6770" else "color:#555;"
     sic_label = f["sic"] + (" &#9733;" if f["sic"] == "6770" else "")
+    is_first = f.get("effect_count", 0) <= 1
+    first_label = "&#10003; Yes" if is_first else "No"
+    first_style = "color:#1a7f3c;font-weight:700;" if is_first else "color:#999;"
 
     return (
-        "<tr style='" + spac_bg + "'>"
+        "<tr>"
         "<td style='padding:8px 12px;border-bottom:1px solid #eee;'>"
         "<a href='" + f["edgar_url"] + "' style='color:#1a56db;text-decoration:none;font-weight:600;'>"
         + f["company"] +
@@ -243,6 +246,7 @@ def build_row(f: dict) -> str:
         "<td style='padding:8px 12px;border-bottom:1px solid #eee;color:#555;'>" + f["cik"] + "</td>"
         "<td style='padding:8px 12px;border-bottom:1px solid #eee;" + sic_style + "'>" + sic_label + "</td>"
         "<td style='padding:8px 12px;border-bottom:1px solid #eee;color:#555;font-size:12px;'>" + f["first_filing_date"] + "</td>"
+        "<td style='padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;" + first_style + "'>" + first_label + "</td>"
         "<td style='padding:8px 12px;border-bottom:1px solid #eee;'>"
         "<a href='" + f["filing_url"] + "' style='color:#1a56db;text-decoration:none;font-size:12px;'>"
         + f["accession"] +
@@ -255,8 +259,8 @@ def build_html_email(filings: list[dict], filing_date: date) -> str:
     date_str = filing_date.strftime("%A, %B %-d, %Y")
     count = len(filings)
 
-    first_effect = [f for f in filings if f.get("effect_count", 0) <= 1]
-    subsequent   = [f for f in filings if f.get("effect_count", 0) > 1]
+    spacs = [f for f in filings if f["sic"] == "6770"]
+    others = [f for f in filings if f["sic"] != "6770"]
 
     def make_table(rows: list[dict], title: str, subtitle: str) -> str:
         if not rows:
@@ -273,15 +277,15 @@ def build_html_email(filings: list[dict], filing_date: date) -> str:
     else:
         body = (
             make_table(
-                first_effect,
-                "First EFFECT Filings",
-                "Companies filing their first registration effective notice - likely new IPOs, SPACs, or primary offerings.",
+                spacs,
+                "Suspected SPACs &#9733; (SIC 6770)",
+                "Blank check companies - likely SPAC IPOs or follow-on SPAC registrations.",
             )
-            + "<div style='margin:24px 0;border-top:2px solid #eee;'></div>"
+            + ("<div style='margin:24px 0;border-top:2px solid #eee;'></div>" if spacs and others else "")
             + make_table(
-                subsequent,
-                "Subsequent EFFECT Filings",
-                "Companies with prior EFFECT filings - likely follow-on offerings, shelf registrations, or amendments.",
+                others,
+                "All Other EFFECT Filings",
+                "IPOs, follow-on offerings, shelf registrations, mergers, and other registration types.",
             )
         )
 
