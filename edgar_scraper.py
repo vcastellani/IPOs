@@ -55,14 +55,20 @@ FORM_CATEGORIES = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Data fetching
+# ---------------------------------------------------------------------------
+
 def get_previous_business_day() -> date:
+    """Return yesterday, rolling back over weekends."""
     today = date.today()
-    if today.weekday() == 0:
+    if today.weekday() == 0:      # Monday -> Friday
         return today - timedelta(days=3)
     return today - timedelta(days=1)
 
 
 def fetch_effect_filings(filing_date: date) -> list[dict]:
+    """Return all EFFECT filings from EDGAR for the given date."""
     date_str = filing_date.strftime("%Y-%m-%d")
     log.info("Fetching EFFECT filings for %s", date_str)
 
@@ -92,7 +98,7 @@ def fetch_effect_filings(filing_date: date) -> list[dict]:
             time.sleep(wait)
 
         if resp.status_code >= 500:
-            log.error("EDGAR search unavailable (HTTP %d) after retries — skipping.", resp.status_code)
+            log.error("EDGAR search unavailable (HTTP %d) after retries - skipping.", resp.status_code)
             return []
 
         resp.raise_for_status()
@@ -116,6 +122,12 @@ def fetch_effect_filings(filing_date: date) -> list[dict]:
 
 
 def get_company_info(cik: str) -> dict:
+    """
+    Fetch company submissions and return:
+      - first_filing_date: earliest filing date on record (YYYY-MM-DD string)
+      - effect_count: total number of EFFECT filings in recent history
+      - category: offering type based on registration form history
+    """
     url = EDGAR_SUBMISSIONS_URL.format(cik.zfill(10))
     try:
         resp = requests.get(url, headers=HEADERS, timeout=15)
@@ -125,13 +137,13 @@ def get_company_info(cik: str) -> dict:
         forms = recent.get("form", [])
         dates = recent.get("filingDate", [])
 
+        # Earliest filing date - dates are most-recent-first, so take the last one
         first_filing_date = dates[-1] if dates else ""
 
-        # Count prior EFFECT filings; <= 1 means this is the first
-        # (0 if current filing hasn't propagated to history yet, 1 if it has)
+        # Count how many EFFECT filings this company has had
         effect_count = forms.count("EFFECT")
-        is_first_effect = effect_count <= 1
 
+        # Determine category from first non-EFFECT registration form
         category = "Other"
         for form in forms:
             if form == "EFFECT":
@@ -141,21 +153,26 @@ def get_company_info(cik: str) -> dict:
                 category = cat
                 break
             if form.startswith("S-") or form.startswith("F-"):
-                category = f"Other ({form})"
+                category = "Other (" + form + ")"
                 break
 
-        return {"first_filing_date": first_filing_date, "category": category, "is_first_effect": is_first_effect}
+        return {
+            "first_filing_date": first_filing_date,
+            "effect_count": effect_count,
+            "category": category,
+        }
     except requests.HTTPError as exc:
         log.warning("HTTP error fetching submissions for CIK %s: %s", cik, exc)
-        return {"first_filing_date": "", "category": "Unknown", "is_first_effect": False}
+        return {"first_filing_date": "", "effect_count": 0, "category": "Unknown"}
     except Exception as exc:
         log.warning("Error fetching submissions for CIK %s: %s", cik, exc)
-        return {"first_filing_date": "", "category": "Unknown", "is_first_effect": False}
+        return {"first_filing_date": "", "effect_count": 0, "category": "Unknown"}
     finally:
         time.sleep(0.15)
 
 
 def parse_filings(raw_hits: list[dict]) -> list[dict]:
+    """Flatten raw EDGAR search hits into clean dicts."""
     parsed = []
     for hit in raw_hits:
         src = hit.get("_source", {})
@@ -171,6 +188,7 @@ def parse_filings(raw_hits: list[dict]) -> list[dict]:
         # accession number is in 'adsh' field
         accession = src.get("adsh", "")
         accession_path = accession.replace("-", "")
+
         sics = src.get("sics", [])
         sic = sics[0] if sics else ""
 
@@ -182,9 +200,9 @@ def parse_filings(raw_hits: list[dict]) -> list[dict]:
                 "accession": accession,
                 "file_date": src.get("file_date", ""),
                 "first_filing_date": "",
-                "is_first_effect": False,
+                "effect_count": 0,
                 "filing_url": (
-                    f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_path}/"
+                    "https://www.sec.gov/Archives/edgar/data/" + cik + "/" + accession_path + "/"
                     if cik and accession_path
                     else "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=EFFECT"
                 ),
@@ -194,107 +212,99 @@ def parse_filings(raw_hits: list[dict]) -> list[dict]:
     return parsed
 
 
-CATEGORY_COLORS = {
-    "IPO": "#1a7f3c",
-    "IPO (Foreign)": "#2e8b57",
-    "REIT IPO": "#4169e1",
-    "SEO / Shelf": "#c07000",
-    "SEO / Shelf (Foreign)": "#c07000",
-    "Merger / SPAC": "#8b0000",
-    "Merger (Foreign)": "#8b0000",
-    "Other": "#555555",
-    "Unknown": "#999999",
-}
+# ---------------------------------------------------------------------------
+# Email
+# ---------------------------------------------------------------------------
+
+TABLE_HEADER = (
+    "<table style='width:100%;border-collapse:collapse;font-size:14px;'>"
+    "<thead><tr style='background:#f4f5f7;'>"
+    "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>Company</th>"
+    "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>CIK</th>"
+    "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>SIC</th>"
+    "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>First Filing</th>"
+    "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>Accession #</th>"
+    "</tr></thead><tbody>"
+)
+TABLE_FOOTER = "</tbody></table>"
+
+
+def build_row(f: dict) -> str:
+    spac_bg = "background:#fff9e6;" if f["sic"] == "6770" else ""
+    sic_style = "font-weight:700;color:#b8860b;" if f["sic"] == "6770" else "color:#555;"
+    sic_label = f["sic"] + (" &#9733;" if f["sic"] == "6770" else "")
+
+    return (
+        "<tr style='" + spac_bg + "'>"
+        "<td style='padding:8px 12px;border-bottom:1px solid #eee;'>"
+        "<a href='" + f["edgar_url"] + "' style='color:#1a56db;text-decoration:none;font-weight:600;'>"
+        + f["company"] +
+        "</a></td>"
+        "<td style='padding:8px 12px;border-bottom:1px solid #eee;color:#555;'>" + f["cik"] + "</td>"
+        "<td style='padding:8px 12px;border-bottom:1px solid #eee;" + sic_style + "'>" + sic_label + "</td>"
+        "<td style='padding:8px 12px;border-bottom:1px solid #eee;color:#555;font-size:12px;'>" + f["first_filing_date"] + "</td>"
+        "<td style='padding:8px 12px;border-bottom:1px solid #eee;'>"
+        "<a href='" + f["filing_url"] + "' style='color:#1a56db;text-decoration:none;font-size:12px;'>"
+        + f["accession"] +
+        "</a></td>"
+        "</tr>"
+    )
 
 
 def build_html_email(filings: list[dict], filing_date: date) -> str:
     date_str = filing_date.strftime("%A, %B %-d, %Y")
+    count = len(filings)
+
+    first_effect = [f for f in filings if f.get("effect_count", 0) <= 1]
+    subsequent   = [f for f in filings if f.get("effect_count", 0) > 1]
+
+    def make_table(rows: list[dict], title: str, subtitle: str) -> str:
+        if not rows:
+            return ""
+        row_html = "".join(build_row(r) for r in rows)
+        return (
+            "<h2 style='margin:24px 0 4px;font-size:16px;color:#1a3a6e;'>" + title + "</h2>"
+            "<p style='margin:0 0 12px;font-size:13px;color:#777;'>" + subtitle + "</p>"
+            + TABLE_HEADER + row_html + TABLE_FOOTER
+        )
 
     if not filings:
-        body = "<p>No EFFECT filings were found on EDGAR for this date.</p>"
+        body = "<p style='color:#555;'>No EFFECT filings were found on EDGAR for this date.</p>"
     else:
-        rows = ""
-        for f in filings:
-            color = CATEGORY_COLORS.get(f["category"], "#555555")
-            first_effect_cell = "Yes" if f["is_first_effect"] else "No"
-            rows += f"""
-            <tr>
-              <td style="padding:8px 12px; border-bottom:1px solid #eee; color:#555;">{f['cik']}</td>
-              <td style="padding:8px 12px; border-bottom:1px solid #eee; color:#555; font-size:12px;">{f['sic']}</td>
-                <a href="{f['edgar_url']}" style="color:#1a56db; text-decoration:none; font-weight:600;">
-                  {f['company']}
-                </a>
-              </td>
-              <td style="padding:8px 12px; border-bottom:1px solid #eee; color:#555;">{f['cik']}</td>
-              <td style="padding:8px 12px; border-bottom:1px solid #eee;">
-                <span style="background:{color}; color:#fff; padding:2px 8px; border-radius:4px;
-                             font-size:12px; font-weight:600; white-space:nowrap;">
-                  {f['category']}
-                </span>
-              </td>
-              <td style="padding:8px 12px; border-bottom:1px solid #eee; color:#555; font-size:12px;">
-                {f['first_filing_date']}
-              </td>
-              <td style="padding:8px 12px; border-bottom:1px solid #eee; font-size:12px; font-weight:600;">
-                {first_effect_cell}
-              </td>
-              <td style="padding:8px 12px; border-bottom:1px solid #eee;">
-                <a href="{f['filing_url']}" style="color:#1a56db; text-decoration:none; font-size:12px;">
-                  {f['accession']}
-                </a>
-              </td>
-            </tr>"""
+        body = (
+            make_table(
+                first_effect,
+                "First EFFECT Filings",
+                "Companies filing their first registration effective notice - likely new IPOs, SPACs, or primary offerings.",
+            )
+            + "<div style='margin:24px 0;border-top:2px solid #eee;'></div>"
+            + make_table(
+                subsequent,
+                "Subsequent EFFECT Filings",
+                "Companies with prior EFFECT filings - likely follow-on offerings, shelf registrations, or amendments.",
+            )
+        )
 
-        body = f"""
-        <table style="width:100%; border-collapse:collapse; font-size:14px;">
-          <thead>
-            <tr style="background:#f4f5f7;">
-              <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">Company Name</th>
-              <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">CIK</th>
-              <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">SIC</th>
-              <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">Type</th>
-              <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">First Filing</th>
-              <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">First</th>
-              <th style="padding:10px 12px; text-align:left; font-weight:700; color:#333;">Accession #</th>
-            </tr>
-          </thead>
-          <tbody>{rows}</tbody>
-        </table>"""
+    filing_count_label = str(count) + " EFFECT filing" + ("s" if count != 1 else "")
 
-    count = len(filings)
-    return f"""<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"></head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-             background:#f9fafb; margin:0; padding:0;">
-  <div style="max-width:860px; margin:32px auto; background:#fff;
-              border-radius:8px; overflow:hidden;
-              box-shadow:0 1px 4px rgba(0,0,0,0.1);">
-
-    <div style="background:#1a3a6e; padding:24px 32px; color:#fff;">
-      <h1 style="margin:0; font-size:20px; font-weight:700;">
-        EDGAR EFFECT Filings
-      </h1>
-      <p style="margin:6px 0 0; opacity:0.85; font-size:14px;">{date_str}</p>
-    </div>
-
-    <div style="padding:24px 32px;">
-      <p style="color:#555; margin:0 0 20px;">
-        <strong>{count}</strong> EFFECT filing{"s" if count != 1 else ""} found on EDGAR.
-        These represent registration statements that became effective - potential
-        IPOs, follow-on offerings, shelf registrations, SPACs, and mergers.
-      </p>
-      {body}
-    </div>
-
-    <div style="padding:16px 32px; background:#f4f5f7; font-size:12px; color:#888;">
-      Source: <a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=EFFECT"
-                 style="color:#1a56db;">SEC EDGAR</a> &mdash;
-      Generated automatically by the EDGAR EFFECT scraper.
-    </div>
-  </div>
-</body>
-</html>"""
+    return (
+        "<!DOCTYPE html><html><head><meta charset='UTF-8'></head>"
+        "<body style='font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:#f9fafb;margin:0;padding:0;'>"
+        "<div style='max-width:900px;margin:32px auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.1);'>"
+        "<div style='background:#1a3a6e;padding:24px 32px;color:#fff;'>"
+        "<h1 style='margin:0;font-size:20px;font-weight:700;'>EDGAR EFFECT Filings</h1>"
+        "<p style='margin:6px 0 0;opacity:0.85;font-size:14px;'>" + date_str + "</p>"
+        "</div>"
+        "<div style='padding:24px 32px;'>"
+        "<p style='color:#555;margin:0 0 8px;'><strong>" + filing_count_label + "</strong> found on EDGAR. "
+        "&#9733; = SIC 6770 (SPAC / Blank Check Company)</p>"
+        + body +
+        "</div>"
+        "<div style='padding:16px 32px;background:#f4f5f7;font-size:12px;color:#888;'>"
+        "Source: <a href='https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&amp;type=EFFECT' style='color:#1a56db;'>SEC EDGAR</a> "
+        "&mdash; Generated automatically by the EDGAR EFFECT scraper."
+        "</div></div></body></html>"
+    )
 
 
 def send_email(subject: str, html_body: str) -> None:
@@ -320,6 +330,10 @@ def send_email(subject: str, html_body: str) -> None:
     log.info("Email sent successfully.")
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def main() -> None:
     date_override = os.environ.get("EDGAR_DATE")
     if date_override:
@@ -336,21 +350,19 @@ def main() -> None:
         log.info("No EFFECT filings found for %s.", filing_date)
 
     filings = parse_filings(raw_hits)
-    log.info("Enriching %d filings with offering category...", len(filings))
+    log.info("Enriching %d filings...", len(filings))
     for f in filings:
         if f["cik"]:
             info = get_company_info(f["cik"])
             f["category"] = info["category"]
             f["first_filing_date"] = info["first_filing_date"]
-            f["is_first_effect"] = info["is_first_effect"]
+            f["effect_count"] = info["effect_count"]
         else:
             f["category"] = "Unknown"
             f["first_filing_date"] = ""
-            f["is_first_effect"] = False
-        log.info(
-            "  %s -> %s (first filing: %s, first EFFECT: %s)",
-            f["company"], f["category"], f["first_filing_date"], f["is_first_effect"],
-        )
+            f["effect_count"] = 0
+        log.info("  %s -> %s (first filing: %s, effect count: %d)",
+                 f["company"], f["category"], f["first_filing_date"], f["effect_count"])
 
     category_order = {
         "IPO": 0,
@@ -366,13 +378,9 @@ def main() -> None:
     filings.sort(key=lambda f: (category_order.get(f["category"], 99), f["company"]))
 
     date_label = filing_date.strftime("%Y-%m-%d")
-    subject = f"EDGAR EFFECT Filings - {date_label} ({len(filings)} filing{'s' if len(filings) != 1 else ''})"
+    subject = "EDGAR EFFECT Filings - " + date_label + " (" + str(len(filings)) + " filing" + ("s" if len(filings) != 1 else "") + ")"
     html = build_html_email(filings, filing_date)
     send_email(subject, html)
-
-
-if __name__ == "__main__":
-    main()
 
 
 if __name__ == "__main__":
