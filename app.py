@@ -1,7 +1,7 @@
 import streamlit as st
 from supabase import create_client, Client
 import pandas as pd
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 st.set_page_config(
     page_title="IPO & SPAC Tracker",
@@ -12,7 +12,6 @@ st.set_page_config(
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-TYPES          = ["IPO", "SPAC", "SEO", "REIT", "Other"]
 EXCHANGES      = ["", "NYSE", "NASDAQ", "AMEX", "Other"]
 STATUSES       = ["Filed", "Effective", "Priced", "Trading", "Withdrawn", "Postponed"]
 SECURITY_TYPES = [
@@ -91,7 +90,6 @@ with st.sidebar:
     st.divider()
 
     st.subheader("Filters")
-    filter_type     = st.multiselect("Type", TYPES)
     filter_status   = st.multiselect("Status", STATUSES)
     filter_exchange = st.multiselect("Exchange", ["NYSE", "NASDAQ", "AMEX", "Other"])
     search          = st.text_input("Search company name")
@@ -103,8 +101,6 @@ st.header("IPO & SPAC Tracker")
 df = load_ipos()
 
 if not df.empty:
-    if filter_type:
-        df = df[df["type"].isin(filter_type)]
     if filter_status:
         df = df[df["status"].isin(filter_status)]
     if filter_exchange:
@@ -112,10 +108,15 @@ if not df.empty:
     if search:
         df = df[df["company_name"].str.contains(search, case=False, na=False)]
 
+    # Compute total offering dynamically (price × securities / 1M)
+    if "offer_price" in df.columns and "securities_offered" in df.columns:
+        df["computed_total"] = (
+            df["offer_price"].fillna(0) * df["securities_offered"].fillna(0) / 1_000_000
+        ).round(1)
+
     display_cols = [c for c in [
-        "company_name", "ticker", "type", "exchange", "ipo_date",
-        "effective_date", "offer_price", "securities_type",
-        "securities_offered", "total_offering_size", "status",
+        "company_name", "ticker", "exchange", "ipo_date", "effective_date",
+        "offer_price", "securities_type", "securities_offered", "computed_total", "status",
     ] if c in df.columns]
 
     st.dataframe(
@@ -123,17 +124,16 @@ if not df.empty:
         use_container_width=True,
         hide_index=True,
         column_config={
-            "company_name":        st.column_config.TextColumn("Company"),
-            "ticker":              st.column_config.TextColumn("Ticker"),
-            "type":                st.column_config.TextColumn("Type"),
-            "exchange":            st.column_config.TextColumn("Exchange"),
-            "ipo_date":            st.column_config.DateColumn("IPO Date"),
-            "effective_date":      st.column_config.DateColumn("Effective Date"),
-            "offer_price":         st.column_config.NumberColumn("Offer Price", format="$%.2f"),
-            "securities_type":     st.column_config.TextColumn("Securities"),
-            "securities_offered":  st.column_config.NumberColumn("Securities Offered", format="%d"),
-            "total_offering_size": st.column_config.NumberColumn("Total ($M)", format="$%.1f"),
-            "status":              st.column_config.TextColumn("Status"),
+            "company_name":       st.column_config.TextColumn("Company"),
+            "ticker":             st.column_config.TextColumn("Common Stock Ticker"),
+            "exchange":           st.column_config.TextColumn("Exchange"),
+            "ipo_date":           st.column_config.DateColumn("IPO Date"),
+            "effective_date":     st.column_config.DateColumn("Effective Date"),
+            "offer_price":        st.column_config.NumberColumn("Price", format="$%.2f"),
+            "securities_type":    st.column_config.TextColumn("Securities Type"),
+            "securities_offered": st.column_config.NumberColumn("Securities Offered", format="%d"),
+            "computed_total":     st.column_config.NumberColumn("Total ($M)", format="$%.1f"),
+            "status":             st.column_config.TextColumn("Status"),
         },
     )
     st.caption(f"{len(df)} filing(s) shown")
@@ -150,27 +150,38 @@ if not df.empty:
             row = df[df["company_name"] == chosen].iloc[0]
             col_info, col_img = st.columns([3, 1])
             with col_info:
+                # Compute overallotment expiry date
+                oa_date_str = None
+                if row.get("ipo_date") and row.get("overallotment_days"):
+                    oa_date = pd.to_datetime(row["ipo_date"]).date() + timedelta(days=int(row["overallotment_days"]))
+                    oa_date_str = oa_date.strftime("%B %d, %Y")
+
+                # Compute total offering
+                total_str = None
+                if row.get("offer_price") and row.get("securities_offered"):
+                    total = row["offer_price"] * row["securities_offered"] / 1_000_000
+                    total_str = f"${total:.1f}M"
+
                 fields = {
                     "CIK":                  row.get("cik"),
-                    "Ticker":               row.get("ticker"),
-                    "Type":                 row.get("type"),
+                    "Common Stock Ticker":  row.get("ticker"),
                     "Exchange":             row.get("exchange"),
-                    "Filing Date":          row.get("filing_date"),
+                    "Auditor":              row.get("auditor"),
                     "IPO Date":             row.get("ipo_date"),
                     "Effective Date":       row.get("effective_date"),
-                    "Offer Price":          f"${row['offer_price']:.2f}" if row.get("offer_price") else None,
+                    "Price":                f"${row['offer_price']:.2f}" if row.get("offer_price") else None,
                     "Securities Type":      row.get("securities_type"),
                     "Securities Offered":   f"{int(row['securities_offered']):,}" if row.get("securities_offered") else None,
+                    "Total Offering":       total_str,
                     "Warrants":             f"{int(row['warrant_count']):,} @ ${row['warrant_strike_price']:.2f}" if row.get("warrant_count") else None,
                     "Rights":               f"{int(row['rights_count']):,}" if row.get("rights_count") else None,
                     "Overallotment Option": f"{int(row['overallotment_option']):,} securities" if row.get("overallotment_option") else None,
-                    "Overallotment Date":   row.get("overallotment_date"),
+                    "Overallotment Period": f"{int(row['overallotment_days'])} days" if row.get("overallotment_days") else None,
+                    "Overallotment Expiry": oa_date_str,
                     "PP Securities":        f"{int(row['pp_securities']):,}" if row.get("pp_securities") else None,
                     "PP Securities Type":   row.get("pp_securities_type"),
                     "PP Price":             f"${row['pp_price']:.2f}" if row.get("pp_price") else None,
-                    "Total Offering ($M)":  f"${row['total_offering_size']:.1f}M" if row.get("total_offering_size") else None,
                     "Underwriters":         row.get("underwriters"),
-                    "Lock-up (days)":       row.get("lock_up_days"),
                     "Status":               row.get("status"),
                     "Notes":                row.get("notes"),
                 }
@@ -191,7 +202,8 @@ if st.session_state.is_admin:
 
     # ── Add ───────────────────────────────────────────────────────────────────
     with tab_add:
-        a_sec_type     = st.selectbox("Securities Type", SECURITY_TYPES, key="add_sec_type")
+        st.markdown("##### Securities Type")
+        a_sec_type     = st.selectbox("Securities Type", SECURITY_TYPES, key="add_sec_type", label_visibility="collapsed")
         a_has_warrants = "Warrant" in a_sec_type
         a_has_rights   = "Right"   in a_sec_type
 
@@ -202,18 +214,17 @@ if st.session_state.is_admin:
                 st.markdown("**Company**")
                 a_name     = st.text_input("Company Name *")
                 a_cik      = st.text_input("CIK")
-                a_ticker   = st.text_input("Ticker")
-                a_type     = st.selectbox("Type", TYPES)
+                a_ticker   = st.text_input("Common Stock Ticker")
                 a_exchange = st.selectbox("Exchange", EXCHANGES)
+                a_auditor  = st.text_input("Auditor")
                 a_status   = st.selectbox("Status", STATUSES)
+                a_image    = st.text_input("Image URL")
 
             with c2:
                 st.markdown("**Dates & Pricing**")
-                a_filing    = st.date_input("Filing Date", value=None)
                 a_ipo       = st.date_input("IPO Date", value=None)
                 a_effective = st.date_input("Effective Date", value=None)
-                a_offer     = st.number_input("Offer Price ($)", min_value=0.0, step=0.01, value=None)
-                a_total     = st.number_input("Total Offering Size ($M)", min_value=0.0, step=1.0, value=None)
+                a_offer     = st.number_input("Price ($)", min_value=0.0, step=0.01, value=None)
 
             with c3:
                 st.markdown("**Securities**")
@@ -232,7 +243,7 @@ if st.session_state.is_admin:
                     a_rights_count = None
 
                 a_oa_option = st.number_input("Overallotment Option (securities)", min_value=0, step=100_000, value=None)
-                a_oa_date   = st.date_input("Overallotment Date", value=None)
+                a_oa_days   = st.number_input("Overallotment Period (days)", min_value=0, step=1, value=None)
 
             st.markdown("**Private Placement**")
             pp1, pp2, pp3 = st.columns(3)
@@ -244,45 +255,36 @@ if st.session_state.is_admin:
                 a_pp_price = st.number_input("PP Price ($)", min_value=0.0, step=0.01, value=None)
 
             st.markdown("**Other**")
-            bot1, bot2, bot3 = st.columns(3)
-            with bot1:
-                a_underwrite = st.text_input("Underwriters")
-            with bot2:
-                a_lockup = st.number_input("Lock-up (days)", min_value=0, step=30, value=None)
-            with bot3:
-                a_image = st.text_input("Image URL")
-            a_notes = st.text_area("Notes")
+            a_underwrite = st.text_input("Underwriters")
+            a_notes      = st.text_area("Notes")
 
             if st.form_submit_button("Add Entry", type="primary"):
                 if not a_name:
                     st.error("Company Name is required.")
                 else:
                     new_row = {
-                        "company_name":        a_name,
-                        "cik":                 a_cik or None,
-                        "ticker":              a_ticker or None,
-                        "type":                a_type,
-                        "exchange":            a_exchange or None,
-                        "filing_date":         a_filing.isoformat() if a_filing else None,
-                        "ipo_date":            a_ipo.isoformat() if a_ipo else None,
-                        "effective_date":      a_effective.isoformat() if a_effective else None,
-                        "offer_price":         a_offer,
-                        "total_offering_size": a_total,
-                        "securities_type":     a_sec_type,
-                        "securities_offered":  int(a_securities) if a_securities else None,
-                        "warrant_count":       int(a_warrant_count) if a_warrant_count else None,
-                        "warrant_strike_price":a_warrant_strike,
-                        "rights_count":        int(a_rights_count) if a_rights_count else None,
-                        "overallotment_option":int(a_oa_option) if a_oa_option else None,
-                        "overallotment_date":  a_oa_date.isoformat() if a_oa_date else None,
-                        "pp_securities":       int(a_pp_securities) if a_pp_securities else None,
-                        "pp_securities_type":  a_pp_sec_type or None,
-                        "pp_price":            a_pp_price,
-                        "underwriters":        a_underwrite or None,
-                        "lock_up_days":        int(a_lockup) if a_lockup else None,
-                        "status":              a_status,
-                        "notes":               a_notes or None,
-                        "image_url":           a_image or None,
+                        "company_name":         a_name,
+                        "cik":                  a_cik or None,
+                        "ticker":               a_ticker or None,
+                        "exchange":             a_exchange or None,
+                        "auditor":              a_auditor or None,
+                        "ipo_date":             a_ipo.isoformat() if a_ipo else None,
+                        "effective_date":       a_effective.isoformat() if a_effective else None,
+                        "offer_price":          a_offer,
+                        "securities_type":      a_sec_type,
+                        "securities_offered":   int(a_securities) if a_securities else None,
+                        "warrant_count":        int(a_warrant_count) if a_warrant_count else None,
+                        "warrant_strike_price": a_warrant_strike,
+                        "rights_count":         int(a_rights_count) if a_rights_count else None,
+                        "overallotment_option": int(a_oa_option) if a_oa_option else None,
+                        "overallotment_days":   int(a_oa_days) if a_oa_days else None,
+                        "pp_securities":        int(a_pp_securities) if a_pp_securities else None,
+                        "pp_securities_type":   a_pp_sec_type or None,
+                        "pp_price":             a_pp_price,
+                        "underwriters":         a_underwrite or None,
+                        "status":               a_status,
+                        "notes":                a_notes or None,
+                        "image_url":            a_image or None,
                     }
                     service_client().table("ipos").insert(new_row).execute()
                     st.success(f"Added {a_name}!")
@@ -303,6 +305,7 @@ if st.session_state.is_admin:
             sel_id    = options[sel_label]
             r         = full_df[full_df["id"] == sel_id].iloc[0]
 
+            st.markdown("##### Securities Type")
             e_sec_default  = r.get("securities_type") or SECURITY_TYPES[0]
             e_sec_type_key = f"edit_sec_type_{sel_id}"
             e_sec_type     = st.selectbox(
@@ -310,6 +313,7 @@ if st.session_state.is_admin:
                 SECURITY_TYPES,
                 index=_idx(SECURITY_TYPES, e_sec_default),
                 key=e_sec_type_key,
+                label_visibility="collapsed",
             )
             e_has_warrants = "Warrant" in e_sec_type
             e_has_rights   = "Right"   in e_sec_type
@@ -324,18 +328,17 @@ if st.session_state.is_admin:
                         st.markdown("**Company**")
                         e_name     = st.text_input("Company Name", value=r.get("company_name", ""))
                         e_cik      = st.text_input("CIK", value=r.get("cik") or "")
-                        e_ticker   = st.text_input("Ticker", value=r.get("ticker") or "")
-                        e_type     = st.selectbox("Type", TYPES, index=_idx(TYPES, r.get("type")))
+                        e_ticker   = st.text_input("Common Stock Ticker", value=r.get("ticker") or "")
                         e_exchange = st.selectbox("Exchange", EXCHANGES, index=_idx(EXCHANGES, r.get("exchange") or ""))
+                        e_auditor  = st.text_input("Auditor", value=r.get("auditor") or "")
                         e_status   = st.selectbox("Status", STATUSES, index=_idx(STATUSES, r.get("status", "Filed")))
+                        e_image    = st.text_input("Image URL", value=r.get("image_url") or "")
 
                     with ec2:
                         st.markdown("**Dates & Pricing**")
-                        e_filing    = st.date_input("Filing Date",    value=pd.to_datetime(r["filing_date"]).date()    if r.get("filing_date")    else None)
                         e_ipo       = st.date_input("IPO Date",       value=pd.to_datetime(r["ipo_date"]).date()       if r.get("ipo_date")       else None)
                         e_effective = st.date_input("Effective Date", value=pd.to_datetime(r["effective_date"]).date() if r.get("effective_date") else None)
-                        e_offer     = st.number_input("Offer Price ($)", value=float(r["offer_price"]) if r.get("offer_price") else 0.0, step=0.01)
-                        e_total     = st.number_input("Total Offering ($M)", value=float(r["total_offering_size"]) if r.get("total_offering_size") else 0.0, step=1.0)
+                        e_offer     = st.number_input("Price ($)", value=float(r["offer_price"]) if r.get("offer_price") else 0.0, step=0.01)
 
                     with ec3:
                         st.markdown("**Securities**")
@@ -354,7 +357,7 @@ if st.session_state.is_admin:
                             e_rights_count = None
 
                         e_oa_option = st.number_input("Overallotment Option", value=int(r["overallotment_option"]) if r.get("overallotment_option") else 0, step=100_000)
-                        e_oa_date   = st.date_input("Overallotment Date", value=pd.to_datetime(r["overallotment_date"]).date() if r.get("overallotment_date") else None)
+                        e_oa_days   = st.number_input("Overallotment Period (days)", value=int(r["overallotment_days"]) if r.get("overallotment_days") else 0, step=1)
 
                     st.markdown("**Private Placement**")
                     epp1, epp2, epp3 = st.columns(3)
@@ -366,43 +369,34 @@ if st.session_state.is_admin:
                         e_pp_price = st.number_input("PP Price ($)", value=float(r["pp_price"]) if r.get("pp_price") else 0.0, step=0.01)
 
                     st.markdown("**Other**")
-                    ebot1, ebot2, ebot3 = st.columns(3)
-                    with ebot1:
-                        e_underwrite = st.text_input("Underwriters", value=r.get("underwriters") or "")
-                    with ebot2:
-                        e_lockup = st.number_input("Lock-up (days)", value=int(r["lock_up_days"]) if r.get("lock_up_days") else 0, step=30)
-                    with ebot3:
-                        e_image = st.text_input("Image URL", value=r.get("image_url") or "")
-                    e_notes = st.text_area("Notes", value=r.get("notes") or "")
+                    e_underwrite = st.text_input("Underwriters", value=r.get("underwriters") or "")
+                    e_notes      = st.text_area("Notes", value=r.get("notes") or "")
 
                     if st.form_submit_button("Save Changes", type="primary"):
                         update = {
-                            "company_name":        e_name,
-                            "cik":                 e_cik or None,
-                            "ticker":              e_ticker or None,
-                            "type":                e_type,
-                            "exchange":            e_exchange or None,
-                            "filing_date":         e_filing.isoformat() if e_filing else None,
-                            "ipo_date":            e_ipo.isoformat() if e_ipo else None,
-                            "effective_date":      e_effective.isoformat() if e_effective else None,
-                            "offer_price":         e_offer or None,
-                            "total_offering_size": e_total or None,
-                            "securities_type":     e_sec_type,
-                            "securities_offered":  int(e_securities) if e_securities else None,
-                            "warrant_count":       int(e_warrant_count) if e_warrant_count else None,
-                            "warrant_strike_price":e_warrant_strike or None,
-                            "rights_count":        int(e_rights_count) if e_rights_count else None,
-                            "overallotment_option":int(e_oa_option) if e_oa_option else None,
-                            "overallotment_date":  e_oa_date.isoformat() if e_oa_date else None,
-                            "pp_securities":       int(e_pp_securities) if e_pp_securities else None,
-                            "pp_securities_type":  e_pp_sec_type or None,
-                            "pp_price":            e_pp_price or None,
-                            "underwriters":        e_underwrite or None,
-                            "lock_up_days":        int(e_lockup) if e_lockup else None,
-                            "status":              e_status,
-                            "notes":               e_notes or None,
-                            "image_url":           e_image or None,
-                            "updated_at":          datetime.utcnow().isoformat(),
+                            "company_name":         e_name,
+                            "cik":                  e_cik or None,
+                            "ticker":               e_ticker or None,
+                            "exchange":             e_exchange or None,
+                            "auditor":              e_auditor or None,
+                            "ipo_date":             e_ipo.isoformat() if e_ipo else None,
+                            "effective_date":       e_effective.isoformat() if e_effective else None,
+                            "offer_price":          e_offer or None,
+                            "securities_type":      e_sec_type,
+                            "securities_offered":   int(e_securities) if e_securities else None,
+                            "warrant_count":        int(e_warrant_count) if e_warrant_count else None,
+                            "warrant_strike_price": e_warrant_strike or None,
+                            "rights_count":         int(e_rights_count) if e_rights_count else None,
+                            "overallotment_option": int(e_oa_option) if e_oa_option else None,
+                            "overallotment_days":   int(e_oa_days) if e_oa_days else None,
+                            "pp_securities":        int(e_pp_securities) if e_pp_securities else None,
+                            "pp_securities_type":   e_pp_sec_type or None,
+                            "pp_price":             e_pp_price or None,
+                            "underwriters":         e_underwrite or None,
+                            "status":               e_status,
+                            "notes":                e_notes or None,
+                            "image_url":            e_image or None,
+                            "updated_at":           datetime.utcnow().isoformat(),
                         }
                         service_client().table("ipos").update(update).eq("id", sel_id).execute()
                         st.success("Saved!")
@@ -417,3 +411,4 @@ if st.session_state.is_admin:
                     st.success("Deleted.")
                     refresh()
                     st.rerun()
+
