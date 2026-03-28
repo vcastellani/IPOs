@@ -19,7 +19,15 @@ SECURITY_TYPES = [
     "Units - Shares and Rights",
     "Units - Shares, Warrants, and Rights",
 ]
-FILING_TYPES = ["S-1", "S-1/A", "8-K", "8-K/A", "Other"]
+PP_SECURITY_TYPES = [
+    "",
+    "Shares",
+    "Warrants",
+    "Units - Shares and Warrants",
+    "Units - Shares and Rights",
+    "Units - Shares, Warrants, and Rights",
+]
+FILING_TYPES = ["S-1", "S-1/A", "8-K (IPO)", "8-K (Combination)", "Other"]
 
 # ── Supabase connections ───────────────────────────────────────────────────────
 
@@ -78,6 +86,24 @@ def fmt_warrants(val):
         return f"{f:,.4f}".rstrip("0").rstrip(".")
     except (ValueError, TypeError):
         return str(val)
+
+def oa_status(option, exercised):
+    """Compute overallotment status from total option and exercised amount."""
+    if not option:
+        return None
+    if exercised is None:
+        return "Pending"
+    elif exercised == 0:
+        return "Expired"
+    elif exercised >= option:
+        return "Fully Exercised"
+    else:
+        return f"Partially Exercised ({fmt_int(exercised)} of {fmt_int(option)})"
+
+def fmt_underwriters(lst):
+    if not lst:
+        return None
+    return ", ".join(lst)
 
 # ── Session state ─────────────────────────────────────────────────────────────
 
@@ -174,6 +200,8 @@ if not df.empty:
                     total = row["offer_price"] * row["securities_offered"] / 1_000_000
                     total_str = f"${total:,.1f}M"
 
+                oa_stat = oa_status(row.get("overallotment_option"), row.get("overallotment_exercised"))
+
                 fields = {
                     "CIK":                  row.get("cik"),
                     "Common Stock Ticker":  row.get("ticker"),
@@ -191,10 +219,11 @@ if not df.empty:
                     "Overallotment Option": f"{fmt_int(row.get('overallotment_option'))} securities" if row.get("overallotment_option") else None,
                     "Overallotment Period": f"{int(row['overallotment_days'])} days" if row.get("overallotment_days") else None,
                     "Overallotment Expiry": oa_date_str,
+                    "Overallotment Status": oa_stat,
                     "PP Securities":        fmt_int(row.get("pp_securities")),
                     "PP Securities Type":   row.get("pp_securities_type"),
                     "PP Price":             f"${row['pp_price']:,.2f}" if row.get("pp_price") else None,
-                    "Underwriters":         row.get("underwriters"),
+                    "Underwriters":         fmt_underwriters(row.get("underwriters_list")),
                     "Notes":                row.get("notes"),
                 }
                 for label, val in fields.items():
@@ -220,11 +249,18 @@ if st.session_state.is_admin:
     st.subheader("Admin Panel")
     tab_add, tab_edit = st.tabs(["Add New Entry", "Edit / Delete"])
 
+    # ── Add ───────────────────────────────────────────────────────────────────
     with tab_add:
-        st.markdown("##### Securities Type")
-        a_sec_type     = st.selectbox("Securities Type", SECURITY_TYPES, key="add_sec_type", label_visibility="collapsed")
-        a_has_warrants = "Warrant" in a_sec_type
-        a_has_rights   = "Right"   in a_sec_type
+        # Outside-form selectors for instant reactivity
+        sel_col1, sel_col2 = st.columns(2)
+        with sel_col1:
+            st.markdown("##### Securities Type")
+            a_sec_type     = st.selectbox("Securities Type", SECURITY_TYPES, key="add_sec_type", label_visibility="collapsed")
+            a_has_warrants = "Warrant" in a_sec_type
+            a_has_rights   = "Right"   in a_sec_type
+        with sel_col2:
+            st.markdown("##### Underwriters")
+            a_uw_mode = st.radio("Underwriter count", ["Solo", "Multiple"], horizontal=True, key="add_uw_mode")
 
         with st.form("add_form", clear_on_submit=True):
             c1, c2, c3 = st.columns(3)
@@ -245,6 +281,22 @@ if st.session_state.is_admin:
                 a_ipo       = st.date_input("IPO Date", value=None)
                 a_offer     = st.number_input("Price ($)", min_value=0.0, step=0.01, value=None)
 
+                st.markdown("**Underwriters**")
+                if a_uw_mode == "Solo":
+                    a_uw_1      = st.text_input("Underwriter")
+                    a_uw_others = []
+                else:
+                    uwc1, uwc2 = st.columns(2)
+                    with uwc1:
+                        a_uw_1 = st.text_input("Underwriter 1 (Lead)")
+                        a_uw_3 = st.text_input("Underwriter 3")
+                        a_uw_5 = st.text_input("Underwriter 5")
+                    with uwc2:
+                        a_uw_2 = st.text_input("Underwriter 2")
+                        a_uw_4 = st.text_input("Underwriter 4")
+                        a_uw_6 = st.text_input("Underwriter 6")
+                    a_uw_others = [a_uw_2, a_uw_3, a_uw_4, a_uw_5, a_uw_6]
+
             with c3:
                 st.markdown("**Securities**")
                 a_securities = st.number_input("Securities Offered", min_value=0, step=100_000, value=None)
@@ -261,21 +313,22 @@ if st.session_state.is_admin:
                 else:
                     a_rights_count = None
 
-                a_oa_option = st.number_input("Overallotment Option (securities)", min_value=0, step=100_000, value=None)
-                a_oa_days   = st.number_input("Overallotment Period (days)", min_value=0, step=1, value=None)
+                st.markdown("**Overallotment**")
+                a_oa_option    = st.number_input("Total Option (securities)", min_value=0, step=100_000, value=None)
+                a_oa_days      = st.number_input("Option Period (days)", min_value=0, step=1, value=None)
+                a_oa_exercised = st.number_input("Exercised (securities)", min_value=0, step=100_000, value=None)
 
             st.markdown("**Private Placement**")
             pp1, pp2, pp3 = st.columns(3)
             with pp1:
                 a_pp_securities = st.number_input("PP Securities", min_value=0, step=100_000, value=None)
             with pp2:
-                a_pp_sec_type = st.selectbox("PP Securities Type", [""] + SECURITY_TYPES)
+                a_pp_sec_type = st.selectbox("PP Securities Type", PP_SECURITY_TYPES)
             with pp3:
                 a_pp_price = st.number_input("PP Price ($)", min_value=0.0, step=0.01, value=None)
 
             st.markdown("**Other**")
-            a_underwrite = st.text_input("Underwriters")
-            a_notes      = st.text_area("Notes")
+            a_notes = st.text_area("Notes")
 
             st.markdown("**Initial Filings**")
             fi1, fi2 = st.columns(2)
@@ -288,42 +341,46 @@ if st.session_state.is_admin:
                 if not a_name:
                     st.error("Company Name is required.")
                 else:
+                    uw_list = [u for u in [a_uw_1] + a_uw_others if u and u.strip()]
+
                     initial_filings = []
                     if a_s1_url:
                         initial_filings.append({"type": "S-1", "url": a_s1_url})
                     if a_8k_url:
-                        initial_filings.append({"type": "8-K", "url": a_8k_url})
+                        initial_filings.append({"type": "8-K (IPO)", "url": a_8k_url})
 
                     new_row = {
-                        "company_name":         a_name,
-                        "cik":                  a_cik or None,
-                        "ticker":               a_ticker or None,
-                        "exchange":             a_exchange or None,
-                        "auditor":              a_auditor or None,
-                        "auditor_since":        a_auditor_since or None,
-                        "effective_date":       a_effective.isoformat() if a_effective else None,
-                        "ipo_date":             a_ipo.isoformat() if a_ipo else None,
-                        "offer_price":          a_offer,
-                        "securities_type":      a_sec_type,
-                        "securities_offered":   int(a_securities) if a_securities else None,
-                        "warrant_count":        float(a_warrant_count) if a_warrant_count else None,
-                        "warrant_strike_price": a_warrant_strike,
-                        "rights_count":         int(a_rights_count) if a_rights_count else None,
-                        "overallotment_option": int(a_oa_option) if a_oa_option else None,
-                        "overallotment_days":   int(a_oa_days) if a_oa_days else None,
-                        "pp_securities":        int(a_pp_securities) if a_pp_securities else None,
-                        "pp_securities_type":   a_pp_sec_type or None,
-                        "pp_price":             a_pp_price,
-                        "underwriters":         a_underwrite or None,
-                        "notes":                a_notes or None,
-                        "image_url":            a_image or None,
-                        "filings":              initial_filings,
+                        "company_name":           a_name,
+                        "cik":                    a_cik or None,
+                        "ticker":                 a_ticker or None,
+                        "exchange":               a_exchange or None,
+                        "auditor":                a_auditor or None,
+                        "auditor_since":          a_auditor_since or None,
+                        "effective_date":         a_effective.isoformat() if a_effective else None,
+                        "ipo_date":               a_ipo.isoformat() if a_ipo else None,
+                        "offer_price":            a_offer,
+                        "securities_type":        a_sec_type,
+                        "securities_offered":     int(a_securities) if a_securities else None,
+                        "warrant_count":          float(a_warrant_count) if a_warrant_count else None,
+                        "warrant_strike_price":   a_warrant_strike,
+                        "rights_count":           int(a_rights_count) if a_rights_count else None,
+                        "overallotment_option":   int(a_oa_option) if a_oa_option else None,
+                        "overallotment_days":     int(a_oa_days) if a_oa_days else None,
+                        "overallotment_exercised":int(a_oa_exercised) if a_oa_exercised is not None else None,
+                        "pp_securities":          int(a_pp_securities) if a_pp_securities else None,
+                        "pp_securities_type":     a_pp_sec_type or None,
+                        "pp_price":               a_pp_price,
+                        "underwriters_list":      uw_list,
+                        "notes":                  a_notes or None,
+                        "image_url":              a_image or None,
+                        "filings":                initial_filings,
                     }
                     service_client().table("ipos").insert(new_row).execute()
                     st.success(f"Added {a_name}!")
                     refresh()
                     st.rerun()
 
+    # ── Edit / Delete ─────────────────────────────────────────────────────────
     with tab_edit:
         full_df = load_ipos()
         if full_df.empty:
@@ -337,18 +394,25 @@ if st.session_state.is_admin:
             sel_id    = options[sel_label]
             r         = full_df[full_df["id"] == sel_id].iloc[0]
 
-            st.markdown("##### Securities Type")
-            e_sec_default  = r.get("securities_type") or SECURITY_TYPES[0]
-            e_sec_type_key = f"edit_sec_type_{sel_id}"
-            e_sec_type     = st.selectbox(
-                "Securities Type",
-                SECURITY_TYPES,
-                index=_idx(SECURITY_TYPES, e_sec_default),
-                key=e_sec_type_key,
-                label_visibility="collapsed",
-            )
-            e_has_warrants = "Warrant" in e_sec_type
-            e_has_rights   = "Right"   in e_sec_type
+            esel1, esel2 = st.columns(2)
+            with esel1:
+                st.markdown("##### Securities Type")
+                e_sec_default  = r.get("securities_type") or SECURITY_TYPES[0]
+                e_sec_type_key = f"edit_sec_type_{sel_id}"
+                e_sec_type     = st.selectbox(
+                    "Securities Type", SECURITY_TYPES,
+                    index=_idx(SECURITY_TYPES, e_sec_default),
+                    key=e_sec_type_key, label_visibility="collapsed",
+                )
+                e_has_warrants = "Warrant" in e_sec_type
+                e_has_rights   = "Right"   in e_sec_type
+            with esel2:
+                st.markdown("##### Underwriters")
+                existing_uws = r.get("underwriters_list") or []
+                e_uw_default = "Multiple" if len(existing_uws) > 1 else "Solo"
+                e_uw_mode    = st.radio("Underwriter count", ["Solo", "Multiple"],
+                                        index=0 if e_uw_default == "Solo" else 1,
+                                        horizontal=True, key=f"edit_uw_mode_{sel_id}")
 
             col_form, col_del = st.columns([4, 1])
 
@@ -372,6 +436,23 @@ if st.session_state.is_admin:
                         e_ipo       = st.date_input("IPO Date",       value=pd.to_datetime(r["ipo_date"]).date()       if r.get("ipo_date")       else None)
                         e_offer     = st.number_input("Price ($)", value=float(r["offer_price"]) if r.get("offer_price") else 0.0, step=0.01)
 
+                        st.markdown("**Underwriters**")
+                        uw0 = existing_uws[0] if len(existing_uws) > 0 else ""
+                        if e_uw_mode == "Solo":
+                            e_uw_1      = st.text_input("Underwriter", value=uw0)
+                            e_uw_others = []
+                        else:
+                            uwc1, uwc2 = st.columns(2)
+                            with uwc1:
+                                e_uw_1 = st.text_input("Underwriter 1 (Lead)", value=uw0)
+                                e_uw_3 = st.text_input("Underwriter 3", value=existing_uws[2] if len(existing_uws) > 2 else "")
+                                e_uw_5 = st.text_input("Underwriter 5", value=existing_uws[4] if len(existing_uws) > 4 else "")
+                            with uwc2:
+                                e_uw_2 = st.text_input("Underwriter 2", value=existing_uws[1] if len(existing_uws) > 1 else "")
+                                e_uw_4 = st.text_input("Underwriter 4", value=existing_uws[3] if len(existing_uws) > 3 else "")
+                                e_uw_6 = st.text_input("Underwriter 6", value=existing_uws[5] if len(existing_uws) > 5 else "")
+                            e_uw_others = [e_uw_2, e_uw_3, e_uw_4, e_uw_5, e_uw_6]
+
                     with ec3:
                         st.markdown("**Securities**")
                         e_securities = st.number_input("Securities Offered", value=int(r["securities_offered"]) if r.get("securities_offered") else 0, step=100_000)
@@ -388,47 +469,50 @@ if st.session_state.is_admin:
                         else:
                             e_rights_count = None
 
-                        e_oa_option = st.number_input("Overallotment Option", value=int(r["overallotment_option"]) if r.get("overallotment_option") else 0, step=100_000)
-                        e_oa_days   = st.number_input("Overallotment Period (days)", value=int(r["overallotment_days"]) if r.get("overallotment_days") else 0, step=1)
+                        st.markdown("**Overallotment**")
+                        e_oa_option    = st.number_input("Total Option (securities)", value=int(r["overallotment_option"]) if r.get("overallotment_option") else 0, step=100_000)
+                        e_oa_days      = st.number_input("Option Period (days)", value=int(r["overallotment_days"]) if r.get("overallotment_days") else 0, step=1)
+                        e_oa_exercised = st.number_input("Exercised (securities)", value=int(r["overallotment_exercised"]) if r.get("overallotment_exercised") is not None else 0, step=100_000)
 
                     st.markdown("**Private Placement**")
                     epp1, epp2, epp3 = st.columns(3)
                     with epp1:
                         e_pp_securities = st.number_input("PP Securities", value=int(r["pp_securities"]) if r.get("pp_securities") else 0, step=100_000)
                     with epp2:
-                        e_pp_sec_type = st.selectbox("PP Securities Type", [""] + SECURITY_TYPES, index=_idx([""] + SECURITY_TYPES, r.get("pp_securities_type") or ""))
+                        e_pp_sec_type = st.selectbox("PP Securities Type", PP_SECURITY_TYPES, index=_idx(PP_SECURITY_TYPES, r.get("pp_securities_type") or ""))
                     with epp3:
                         e_pp_price = st.number_input("PP Price ($)", value=float(r["pp_price"]) if r.get("pp_price") else 0.0, step=0.01)
 
                     st.markdown("**Other**")
-                    e_underwrite = st.text_input("Underwriters", value=r.get("underwriters") or "")
-                    e_notes      = st.text_area("Notes", value=r.get("notes") or "")
+                    e_notes = st.text_area("Notes", value=r.get("notes") or "")
 
                     if st.form_submit_button("Save Changes", type="primary"):
+                        e_uw_list = [u for u in [e_uw_1] + e_uw_others if u and u.strip()]
                         update = {
-                            "company_name":         e_name,
-                            "cik":                  e_cik or None,
-                            "ticker":               e_ticker or None,
-                            "exchange":             e_exchange or None,
-                            "auditor":              e_auditor or None,
-                            "auditor_since":        e_auditor_since or None,
-                            "effective_date":       e_effective.isoformat() if e_effective else None,
-                            "ipo_date":             e_ipo.isoformat() if e_ipo else None,
-                            "offer_price":          e_offer or None,
-                            "securities_type":      e_sec_type,
-                            "securities_offered":   int(e_securities) if e_securities else None,
-                            "warrant_count":        float(e_warrant_count) if e_warrant_count else None,
-                            "warrant_strike_price": e_warrant_strike or None,
-                            "rights_count":         int(e_rights_count) if e_rights_count else None,
-                            "overallotment_option": int(e_oa_option) if e_oa_option else None,
-                            "overallotment_days":   int(e_oa_days) if e_oa_days else None,
-                            "pp_securities":        int(e_pp_securities) if e_pp_securities else None,
-                            "pp_securities_type":   e_pp_sec_type or None,
-                            "pp_price":             e_pp_price or None,
-                            "underwriters":         e_underwrite or None,
-                            "notes":                e_notes or None,
-                            "image_url":            e_image or None,
-                            "updated_at":           datetime.utcnow().isoformat(),
+                            "company_name":           e_name,
+                            "cik":                    e_cik or None,
+                            "ticker":                 e_ticker or None,
+                            "exchange":               e_exchange or None,
+                            "auditor":                e_auditor or None,
+                            "auditor_since":          e_auditor_since or None,
+                            "effective_date":         e_effective.isoformat() if e_effective else None,
+                            "ipo_date":               e_ipo.isoformat() if e_ipo else None,
+                            "offer_price":            e_offer or None,
+                            "securities_type":        e_sec_type,
+                            "securities_offered":     int(e_securities) if e_securities else None,
+                            "warrant_count":          float(e_warrant_count) if e_warrant_count else None,
+                            "warrant_strike_price":   e_warrant_strike or None,
+                            "rights_count":           int(e_rights_count) if e_rights_count else None,
+                            "overallotment_option":   int(e_oa_option) if e_oa_option else None,
+                            "overallotment_days":     int(e_oa_days) if e_oa_days else None,
+                            "overallotment_exercised":int(e_oa_exercised) if e_oa_exercised is not None else None,
+                            "pp_securities":          int(e_pp_securities) if e_pp_securities else None,
+                            "pp_securities_type":     e_pp_sec_type or None,
+                            "pp_price":               e_pp_price or None,
+                            "underwriters_list":      e_uw_list,
+                            "notes":                  e_notes or None,
+                            "image_url":              e_image or None,
+                            "updated_at":             datetime.utcnow().isoformat(),
                         }
                         service_client().table("ipos").update(update).eq("id", sel_id).execute()
                         st.success("Saved!")
