@@ -170,10 +170,10 @@ if not df.empty:
             "exchange":           st.column_config.TextColumn("Exchange"),
             "effective_date":     st.column_config.DateColumn("Effective Date"),
             "ipo_date":           st.column_config.DateColumn("IPO Date"),
-            "offer_price":        st.column_config.NumberColumn("Price", format="$,.2f"),
+            "offer_price":        st.column_config.NumberColumn("Price", format="$ %.2f"),
             "securities_type":    st.column_config.TextColumn("Securities Type"),
-            "securities_offered": st.column_config.NumberColumn("Securities Offered", format=",.0f"),
-            "computed_total":     st.column_config.NumberColumn("Total ($M)", format="$,.1f"),
+            "securities_offered": st.column_config.NumberColumn("Securities Offered", format="%.0f"),
+            "computed_total":     st.column_config.NumberColumn("Total ($M)", format="$ %.1f"),
         },
     )
     st.caption(f"{len(df)} filing(s) shown")
@@ -216,10 +216,11 @@ if not df.empty:
                     "Total Offering":       total_str,
                     "Warrants":             f"{fmt_warrants(row.get('warrant_count'))} @ ${row['warrant_strike_price']:,.2f}" if row.get("warrant_count") else None,
                     "Rights":               fmt_int(row.get("rights_count")),
-                    "Overallotment Option": f"{fmt_int(row.get('overallotment_option'))} securities" if row.get("overallotment_option") else None,
-                    "Overallotment Period": f"{int(row['overallotment_days'])} days" if row.get("overallotment_days") else None,
-                    "Overallotment Expiry": oa_date_str,
-                    "Overallotment Status": oa_stat,
+                    "Overallotment Option":        f"{fmt_int(row.get('overallotment_option'))} securities" if row.get("overallotment_option") else None,
+                    "Overallotment Period":        f"{int(row['overallotment_days'])} days" if row.get("overallotment_days") else None,
+                    "Overallotment Expiry":        oa_date_str,
+                    "Overallotment Status":        oa_stat,
+                    "Overallotment Exercise Date": row.get("overallotment_exercised_date"),
                     "PP Securities":        fmt_int(row.get("pp_securities")),
                     "PP Securities Type":   row.get("pp_securities_type"),
                     "PP Price":             f"${row['pp_price']:,.2f}" if row.get("pp_price") else None,
@@ -314,9 +315,10 @@ if st.session_state.is_admin:
                     a_rights_count = None
 
                 st.markdown("**Overallotment**")
-                a_oa_option    = st.number_input("Total Option (securities)", min_value=0, step=100_000, value=None)
-                a_oa_days      = st.number_input("Option Period (days)", min_value=0, step=1, value=None)
-                a_oa_exercised = st.number_input("Exercised (securities)", min_value=0, step=100_000, value=None)
+                a_oa_option         = st.number_input("Total Option (securities)", min_value=0, step=100_000, value=None)
+                a_oa_days           = st.number_input("Option Period (days)", min_value=0, step=1, value=None)
+                a_oa_exercised      = st.number_input("Exercised (securities)", min_value=0, step=100_000, value=None)
+                a_oa_exercised_date = st.date_input("Exercise Date", value=None, key="add_oa_ex_date")
 
             st.markdown("**Private Placement**")
             pp1, pp2, pp3 = st.columns(3)
@@ -364,9 +366,10 @@ if st.session_state.is_admin:
                         "warrant_count":          float(a_warrant_count) if a_warrant_count else None,
                         "warrant_strike_price":   a_warrant_strike,
                         "rights_count":           int(a_rights_count) if a_rights_count else None,
-                        "overallotment_option":   int(a_oa_option) if a_oa_option else None,
-                        "overallotment_days":     int(a_oa_days) if a_oa_days else None,
-                        "overallotment_exercised":int(a_oa_exercised) if a_oa_exercised is not None else None,
+                        "overallotment_option":        int(a_oa_option) if a_oa_option else None,
+                        "overallotment_days":          int(a_oa_days) if a_oa_days else None,
+                        "overallotment_exercised":     int(a_oa_exercised) if a_oa_exercised is not None else None,
+                        "overallotment_exercised_date":a_oa_exercised_date.isoformat() if a_oa_exercised_date else None,
                         "pp_securities":          int(a_pp_securities) if a_pp_securities else None,
                         "pp_securities_type":     a_pp_sec_type or None,
                         "pp_price":               a_pp_price,
@@ -470,10 +473,10 @@ if st.session_state.is_admin:
                             e_rights_count = None
 
                         st.markdown("**Overallotment**")
-                        e_oa_option    = st.number_input("Total Option (securities)", value=int(r["overallotment_option"]) if r.get("overallotment_option") else 0, step=100_000)
-                        e_oa_days      = st.number_input("Option Period (days)", value=int(r["overallotment_days"]) if r.get("overallotment_days") else 0, step=1)
-                        e_oa_exercised = st.number_input("Exercised (securities)", value=int(r["overallotment_exercised"]) if pd.notna(r.get("overallotment_exercised")) else 0, step=100_000)
-
+                        e_oa_option         = st.number_input("Total Option (securities)", value=int(r["overallotment_option"]) if r.get("overallotment_option") else 0, step=100_000)
+                        e_oa_days           = st.number_input("Option Period (days)", value=int(r["overallotment_days"]) if r.get("overallotment_days") else 0, step=1)
+                        e_oa_exercised      = st.number_input("Exercised (securities)", value=int(r["overallotment_exercised"]) if pd.notna(r.get("overallotment_exercised")) else 0, step=100_000)
+                        e_oa_exercised_date = st.date_input("Exercise Date", value=pd.to_datetime(r["overallotment_exercised_date"]).date() if r.get("overallotment_exercised_date") else None)
 
                     st.markdown("**Private Placement**")
                     epp1, epp2, epp3 = st.columns(3)
@@ -504,9 +507,10 @@ if st.session_state.is_admin:
                             "warrant_count":          float(e_warrant_count) if e_warrant_count else None,
                             "warrant_strike_price":   e_warrant_strike or None,
                             "rights_count":           int(e_rights_count) if e_rights_count else None,
-                            "overallotment_option":   int(e_oa_option) if e_oa_option else None,
-                            "overallotment_exercised":int(e_oa_exercised) if pd.notna(e_oa_exercised) else None,
-                            "overallotment_exercised":int(e_oa_exercised) if e_oa_exercised is not None else None,
+                            "overallotment_option":        int(e_oa_option) if e_oa_option else None,
+                            "overallotment_days":          int(e_oa_days) if e_oa_days else None,
+                            "overallotment_exercised":     int(e_oa_exercised) if pd.notna(e_oa_exercised) else None,
+                            "overallotment_exercised_date":e_oa_exercised_date.isoformat() if e_oa_exercised_date else None,
                             "pp_securities":          int(e_pp_securities) if e_pp_securities else None,
                             "pp_securities_type":     e_pp_sec_type or None,
                             "pp_price":               e_pp_price or None,
