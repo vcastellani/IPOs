@@ -1,0 +1,306 @@
+import streamlit as st
+from supabase import create_client, Client
+import pandas as pd
+from datetime import date, datetime
+
+st.set_page_config(
+    page_title="IPO & SPAC Tracker",
+    page_icon="📈",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ── Supabase connections ───────────────────────────────────────────────────────
+
+@st.cache_resource
+def anon_client() -> Client:
+    return create_client(
+        st.secrets["supabase"]["url"],
+        st.secrets["supabase"]["anon_key"],
+    )
+
+def service_client() -> Client:
+    return create_client(
+        st.secrets["supabase"]["url"],
+        st.secrets["supabase"]["service_role_key"],
+    )
+
+# ── Data ──────────────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=60)
+def load_ipos() -> pd.DataFrame:
+    resp = (
+        anon_client()
+        .table("ipos")
+        .select("*")
+        .order("effective_date", desc=True)
+        .execute()
+    )
+    if not resp.data:
+        return pd.DataFrame()
+    return pd.DataFrame(resp.data)
+
+def refresh():
+    st.cache_data.clear()
+
+# ── Session state ─────────────────────────────────────────────────────────────
+
+if "is_admin" not in st.session_state:
+    st.session_state.is_admin = False
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
+
+with st.sidebar:
+    st.title("📈 IPO & SPAC Tracker")
+    st.caption("Tracking EDGAR EFFECT filings")
+    st.divider()
+
+    if not st.session_state.is_admin:
+        with st.expander("Admin Login"):
+            pwd = st.text_input("Password", type="password", key="pwd_input")
+            if st.button("Login"):
+                if pwd == st.secrets.get("admin_password", ""):
+                    st.session_state.is_admin = True
+                    st.rerun()
+                else:
+                    st.error("Incorrect password")
+    else:
+        st.success("Logged in as admin")
+        if st.button("Logout"):
+            st.session_state.is_admin = False
+            st.rerun()
+
+    st.divider()
+
+    st.subheader("Filters")
+    filter_type = st.multiselect(
+        "Type", ["IPO", "SPAC", "SEO", "REIT", "Other"]
+    )
+    filter_status = st.multiselect(
+        "Status", ["Filed", "Effective", "Priced", "Trading", "Withdrawn", "Postponed"]
+    )
+    filter_exchange = st.multiselect(
+        "Exchange", ["NYSE", "NASDAQ", "AMEX", "Other"]
+    )
+    search = st.text_input("Search company name")
+
+# ── Main table ────────────────────────────────────────────────────────────────
+
+st.header("IPO & SPAC Tracker")
+
+df = load_ipos()
+
+if not df.empty:
+    if filter_type:
+        df = df[df["type"].isin(filter_type)]
+    if filter_status:
+        df = df[df["status"].isin(filter_status)]
+    if filter_exchange:
+        df = df[df["exchange"].isin(filter_exchange)]
+    if search:
+        df = df[df["company_name"].str.contains(search, case=False, na=False)]
+
+    display_cols = [c for c in [
+        "company_name", "ticker", "type", "exchange",
+        "effective_date", "price_range", "offer_price",
+        "shares_offered", "total_offering_size", "status",
+    ] if c in df.columns]
+
+    st.dataframe(
+        df[display_cols],
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "company_name":        st.column_config.TextColumn("Company"),
+            "ticker":              st.column_config.TextColumn("Ticker"),
+            "type":                st.column_config.TextColumn("Type"),
+            "exchange":            st.column_config.TextColumn("Exchange"),
+            "effective_date":      st.column_config.DateColumn("Effective Date"),
+            "price_range":         st.column_config.TextColumn("Price Range"),
+            "offer_price":         st.column_config.NumberColumn("Offer Price", format="$%.2f"),
+            "shares_offered":      st.column_config.NumberColumn("Shares", format="%d"),
+            "total_offering_size": st.column_config.NumberColumn("Total ($M)", format="$%.1f"),
+            "status":              st.column_config.TextColumn("Status"),
+        },
+    )
+    st.caption(f"{len(df)} filing(s) shown")
+else:
+    st.info("No filings yet. Log in as admin to add entries.")
+
+# ── Detail view ───────────────────────────────────────────────────────────────
+
+if not df.empty:
+    with st.expander("Detail View"):
+        names = df["company_name"].tolist()
+        chosen = st.selectbox("Select a company", names, key="detail_select")
+        if chosen:
+            row = df[df["company_name"] == chosen].iloc[0]
+            col_info, col_img = st.columns([3, 1])
+            with col_info:
+                fields = {
+                    "CIK":                 row.get("cik"),
+                    "Ticker":              row.get("ticker"),
+                    "Type":                row.get("type"),
+                    "Exchange":            row.get("exchange"),
+                    "Filing Date":         row.get("filing_date"),
+                    "Effective Date":      row.get("effective_date"),
+                    "Price Range":         row.get("price_range"),
+                    "Offer Price":         f"${row['offer_price']:.2f}" if row.get("offer_price") else None,
+                    "Shares Offered":      f"{int(row['shares_offered']):,}" if row.get("shares_offered") else None,
+                    "Warrants":            row.get("warrants"),
+                    "Total Offering ($M)": f"${row['total_offering_size']:.1f}M" if row.get("total_offering_size") else None,
+                    "Underwriters":        row.get("underwriters"),
+                    "Lock-up (days)":      row.get("lock_up_days"),
+                    "Status":              row.get("status"),
+                    "Notes":               row.get("notes"),
+                }
+                for label, val in fields.items():
+                    if val is not None and val != "":
+                        st.markdown(f"**{label}:** {val}")
+            with col_img:
+                img = row.get("image_url")
+                if img:
+                    st.image(img, use_container_width=True)
+
+# ── Admin panel ───────────────────────────────────────────────────────────────
+
+TYPES     = ["IPO", "SPAC", "SEO", "REIT", "Other"]
+EXCHANGES = ["", "NYSE", "NASDAQ", "AMEX", "Other"]
+STATUSES  = ["Filed", "Effective", "Priced", "Trading", "Withdrawn", "Postponed"]
+
+if st.session_state.is_admin:
+    st.divider()
+    st.subheader("Admin Panel")
+    tab_add, tab_edit = st.tabs(["Add New Entry", "Edit / Delete"])
+
+    with tab_add:
+        with st.form("add_form", clear_on_submit=True):
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                a_name       = st.text_input("Company Name *")
+                a_cik        = st.text_input("CIK")
+                a_ticker     = st.text_input("Ticker")
+                a_type       = st.selectbox("Type", TYPES)
+                a_exchange   = st.selectbox("Exchange", EXCHANGES)
+                a_status     = st.selectbox("Status", STATUSES)
+            with c2:
+                a_filing     = st.date_input("Filing Date", value=None)
+                a_effective  = st.date_input("Effective Date", value=None)
+                a_price_rng  = st.text_input("Price Range (e.g. $10.00–$12.00)")
+                a_offer      = st.number_input("Offer Price ($)", min_value=0.0, step=0.01, value=None)
+                a_shares     = st.number_input("Shares Offered", min_value=0, step=100_000, value=None)
+            with c3:
+                a_warrants   = st.text_input("Warrants")
+                a_total      = st.number_input("Total Offering Size ($M)", min_value=0.0, step=1.0, value=None)
+                a_underwrite = st.text_input("Underwriters")
+                a_lockup     = st.number_input("Lock-up (days)", min_value=0, step=30, value=None)
+                a_image      = st.text_input("Image URL")
+            a_notes = st.text_area("Notes")
+
+            if st.form_submit_button("Add Entry", type="primary"):
+                if not a_name:
+                    st.error("Company Name is required.")
+                else:
+                    new_row = {
+                        "company_name":        a_name,
+                        "cik":                 a_cik or None,
+                        "ticker":              a_ticker or None,
+                        "type":                a_type,
+                        "exchange":            a_exchange or None,
+                        "filing_date":         a_filing.isoformat() if a_filing else None,
+                        "effective_date":      a_effective.isoformat() if a_effective else None,
+                        "price_range":         a_price_rng or None,
+                        "offer_price":         a_offer,
+                        "shares_offered":      int(a_shares) if a_shares else None,
+                        "warrants":            a_warrants or None,
+                        "total_offering_size": a_total,
+                        "underwriters":        a_underwrite or None,
+                        "lock_up_days":        int(a_lockup) if a_lockup else None,
+                        "status":              a_status,
+                        "notes":               a_notes or None,
+                        "image_url":           a_image or None,
+                    }
+                    service_client().table("ipos").insert(new_row).execute()
+                    st.success(f"Added {a_name}!")
+                    refresh()
+                    st.rerun()
+
+    with tab_edit:
+        full_df = load_ipos()
+        if full_df.empty:
+            st.info("No entries to edit yet.")
+        else:
+            options = {
+                f"{r['company_name']}  (ID {r['id']})": r["id"]
+                for _, r in full_df.iterrows()
+            }
+            sel_label = st.selectbox("Select entry", list(options.keys()), key="edit_select")
+            sel_id    = options[sel_label]
+            r         = full_df[full_df["id"] == sel_id].iloc[0]
+
+            def _idx(lst, val, default=0):
+                try:
+                    return lst.index(val)
+                except ValueError:
+                    return default
+
+            col_form, col_del = st.columns([4, 1])
+
+            with col_form:
+                with st.form("edit_form"):
+                    ec1, ec2, ec3 = st.columns(3)
+                    with ec1:
+                        e_name     = st.text_input("Company Name", value=r.get("company_name", ""))
+                        e_cik      = st.text_input("CIK", value=r.get("cik") or "")
+                        e_ticker   = st.text_input("Ticker", value=r.get("ticker") or "")
+                        e_type     = st.selectbox("Type", TYPES, index=_idx(TYPES, r.get("type")))
+                        e_exchange = st.selectbox("Exchange", EXCHANGES, index=_idx(EXCHANGES, r.get("exchange") or ""))
+                        e_status   = st.selectbox("Status", STATUSES, index=_idx(STATUSES, r.get("status", "Filed")))
+                    with ec2:
+                        e_filing    = st.date_input("Filing Date",    value=pd.to_datetime(r["filing_date"]).date()    if r.get("filing_date")    else None)
+                        e_effective = st.date_input("Effective Date", value=pd.to_datetime(r["effective_date"]).date() if r.get("effective_date") else None)
+                        e_price_rng = st.text_input("Price Range", value=r.get("price_range") or "")
+                        e_offer     = st.number_input("Offer Price ($)", value=float(r["offer_price"]) if r.get("offer_price") else 0.0, step=0.01)
+                        e_shares    = st.number_input("Shares Offered", value=int(r["shares_offered"]) if r.get("shares_offered") else 0, step=100_000)
+                    with ec3:
+                        e_warrants   = st.text_input("Warrants", value=r.get("warrants") or "")
+                        e_total      = st.number_input("Total Offering ($M)", value=float(r["total_offering_size"]) if r.get("total_offering_size") else 0.0, step=1.0)
+                        e_underwrite = st.text_input("Underwriters", value=r.get("underwriters") or "")
+                        e_lockup     = st.number_input("Lock-up (days)", value=int(r["lock_up_days"]) if r.get("lock_up_days") else 0, step=30)
+                        e_image      = st.text_input("Image URL", value=r.get("image_url") or "")
+                    e_notes = st.text_area("Notes", value=r.get("notes") or "")
+
+                    if st.form_submit_button("Save Changes", type="primary"):
+                        update = {
+                            "company_name":        e_name,
+                            "cik":                 e_cik or None,
+                            "ticker":              e_ticker or None,
+                            "type":                e_type,
+                            "exchange":            e_exchange or None,
+                            "filing_date":         e_filing.isoformat() if e_filing else None,
+                            "effective_date":      e_effective.isoformat() if e_effective else None,
+                            "price_range":         e_price_rng or None,
+                            "offer_price":         e_offer or None,
+                            "shares_offered":      int(e_shares) if e_shares else None,
+                            "warrants":            e_warrants or None,
+                            "total_offering_size": e_total or None,
+                            "underwriters":        e_underwrite or None,
+                            "lock_up_days":        int(e_lockup) if e_lockup else None,
+                            "status":              e_status,
+                            "notes":               e_notes or None,
+                            "image_url":           e_image or None,
+                            "updated_at":          datetime.utcnow().isoformat(),
+                        }
+                        service_client().table("ipos").update(update).eq("id", sel_id).execute()
+                        st.success("Saved!")
+                        refresh()
+                        st.rerun()
+
+            with col_del:
+                st.markdown("**Delete**")
+                st.warning(f"Permanently delete **{r['company_name']}**?")
+                if st.button("Delete", type="secondary", key="del_btn"):
+                    service_client().table("ipos").delete().eq("id", sel_id).execute()
+                    st.success("Deleted.")
+                    refresh()
+                    st.rerun()
