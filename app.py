@@ -4,7 +4,7 @@ import pandas as pd
 from datetime import date, datetime, timedelta
 
 st.set_page_config(
-    page_title="IPO & SPAC Tracker",
+    page_title="SPAC Tracker",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -88,7 +88,6 @@ def fmt_warrants(val):
         return str(val)
 
 def oa_status(option, exercised):
-    """Compute overallotment status from total option and exercised amount."""
     if not option:
         return None
     if exercised is None:
@@ -113,7 +112,7 @@ if "is_admin" not in st.session_state:
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.title("📈 IPO & SPAC Tracker")
+    st.title("📈 SPAC Tracker")
     st.caption("Tracking EDGAR EFFECT filings")
     st.divider()
 
@@ -140,7 +139,7 @@ with st.sidebar:
 
 # ── Main table ────────────────────────────────────────────────────────────────
 
-st.header("IPO & SPAC Tracker")
+st.header("SPAC Tracker")
 
 df = load_ipos()
 
@@ -177,6 +176,23 @@ if not df.empty:
         },
     )
     st.caption(f"{len(df)} filing(s) shown")
+
+    dl1, dl2 = st.columns([1, 1])
+    with dl1:
+        st.download_button(
+            "Download filtered view (.csv)",
+            data=df.to_csv(index=False),
+            file_name="spac_tracker_filtered.csv",
+            mime="text/csv",
+        )
+    with dl2:
+        full_export = load_ipos()
+        st.download_button(
+            "Download full database (.csv)",
+            data=full_export.to_csv(index=False),
+            file_name="spac_tracker_full.csv",
+            mime="text/csv",
+        )
 else:
     st.info("No filings yet. Log in as admin to add entries.")
 
@@ -252,7 +268,6 @@ if st.session_state.is_admin:
 
     # ── Add ───────────────────────────────────────────────────────────────────
     with tab_add:
-        # Outside-form selectors for instant reactivity
         sel_col1, sel_col2 = st.columns(2)
         with sel_col1:
             st.markdown("##### Securities Type")
@@ -352,31 +367,31 @@ if st.session_state.is_admin:
                         initial_filings.append({"type": "8-K (IPO)", "url": a_8k_url})
 
                     new_row = {
-                        "company_name":           a_name,
-                        "cik":                    a_cik or None,
-                        "ticker":                 a_ticker or None,
-                        "exchange":               a_exchange or None,
-                        "auditor":                a_auditor or None,
-                        "auditor_since":          a_auditor_since or None,
-                        "effective_date":         a_effective.isoformat() if a_effective else None,
-                        "ipo_date":               a_ipo.isoformat() if a_ipo else None,
-                        "offer_price":            a_offer,
-                        "securities_type":        a_sec_type,
-                        "securities_offered":     int(a_securities) if a_securities else None,
-                        "warrant_count":          float(a_warrant_count) if a_warrant_count else None,
-                        "warrant_strike_price":   a_warrant_strike,
-                        "rights_count":           int(a_rights_count) if a_rights_count else None,
+                        "company_name":                a_name,
+                        "cik":                         a_cik or None,
+                        "ticker":                      a_ticker or None,
+                        "exchange":                    a_exchange or None,
+                        "auditor":                     a_auditor or None,
+                        "auditor_since":               a_auditor_since or None,
+                        "effective_date":              a_effective.isoformat() if a_effective else None,
+                        "ipo_date":                    a_ipo.isoformat() if a_ipo else None,
+                        "offer_price":                 a_offer,
+                        "securities_type":             a_sec_type,
+                        "securities_offered":          int(a_securities) if a_securities else None,
+                        "warrant_count":               float(a_warrant_count) if a_warrant_count else None,
+                        "warrant_strike_price":        a_warrant_strike,
+                        "rights_count":                int(a_rights_count) if a_rights_count else None,
                         "overallotment_option":        int(a_oa_option) if a_oa_option else None,
                         "overallotment_days":          int(a_oa_days) if a_oa_days else None,
                         "overallotment_exercised":     int(a_oa_exercised) if a_oa_exercised is not None else None,
                         "overallotment_exercised_date":a_oa_exercised_date.isoformat() if a_oa_exercised_date else None,
-                        "pp_securities":          int(a_pp_securities) if a_pp_securities else None,
-                        "pp_securities_type":     a_pp_sec_type or None,
-                        "pp_price":               a_pp_price,
-                        "underwriters_list":      uw_list,
-                        "notes":                  a_notes or None,
-                        "image_url":              a_image or None,
-                        "filings":                initial_filings,
+                        "pp_securities":               int(a_pp_securities) if a_pp_securities else None,
+                        "pp_securities_type":          a_pp_sec_type or None,
+                        "pp_price":                    a_pp_price,
+                        "underwriters_list":           uw_list,
+                        "notes":                       a_notes or None,
+                        "image_url":                   a_image or None,
+                        "filings":                     initial_filings,
                     }
                     service_client().table("ipos").insert(new_row).execute()
                     st.success(f"Added {a_name}!")
@@ -493,31 +508,31 @@ if st.session_state.is_admin:
                     if st.form_submit_button("Save Changes", type="primary"):
                         e_uw_list = [u for u in [e_uw_1] + e_uw_others if u and u.strip()]
                         update = {
-                            "company_name":           e_name,
-                            "cik":                    e_cik or None,
-                            "ticker":                 e_ticker or None,
-                            "exchange":               e_exchange or None,
-                            "auditor":                e_auditor or None,
-                            "auditor_since":          e_auditor_since or None,
-                            "effective_date":         e_effective.isoformat() if e_effective else None,
-                            "ipo_date":               e_ipo.isoformat() if e_ipo else None,
-                            "offer_price":            e_offer or None,
-                            "securities_type":        e_sec_type,
-                            "securities_offered":     int(e_securities) if e_securities else None,
-                            "warrant_count":          float(e_warrant_count) if e_warrant_count else None,
-                            "warrant_strike_price":   e_warrant_strike or None,
-                            "rights_count":           int(e_rights_count) if e_rights_count else None,
+                            "company_name":                e_name,
+                            "cik":                         e_cik or None,
+                            "ticker":                      e_ticker or None,
+                            "exchange":                    e_exchange or None,
+                            "auditor":                     e_auditor or None,
+                            "auditor_since":               e_auditor_since or None,
+                            "effective_date":              e_effective.isoformat() if e_effective else None,
+                            "ipo_date":                    e_ipo.isoformat() if e_ipo else None,
+                            "offer_price":                 e_offer or None,
+                            "securities_type":             e_sec_type,
+                            "securities_offered":          int(e_securities) if e_securities else None,
+                            "warrant_count":               float(e_warrant_count) if e_warrant_count else None,
+                            "warrant_strike_price":        e_warrant_strike or None,
+                            "rights_count":                int(e_rights_count) if e_rights_count else None,
                             "overallotment_option":        int(e_oa_option) if e_oa_option else None,
                             "overallotment_days":          int(e_oa_days) if e_oa_days else None,
                             "overallotment_exercised":     int(e_oa_exercised) if pd.notna(e_oa_exercised) else None,
                             "overallotment_exercised_date":e_oa_exercised_date.isoformat() if e_oa_exercised_date else None,
-                            "pp_securities":          int(e_pp_securities) if e_pp_securities else None,
-                            "pp_securities_type":     e_pp_sec_type or None,
-                            "pp_price":               e_pp_price or None,
-                            "underwriters_list":      e_uw_list,
-                            "notes":                  e_notes or None,
-                            "image_url":              e_image or None,
-                            "updated_at":             datetime.utcnow().isoformat(),
+                            "pp_securities":               int(e_pp_securities) if e_pp_securities else None,
+                            "pp_securities_type":          e_pp_sec_type or None,
+                            "pp_price":                    e_pp_price or None,
+                            "underwriters_list":           e_uw_list,
+                            "notes":                       e_notes or None,
+                            "image_url":                   e_image or None,
+                            "updated_at":                  datetime.utcnow().isoformat(),
                         }
                         service_client().table("ipos").update(update).eq("id", sel_id).execute()
                         st.success("Saved!")
