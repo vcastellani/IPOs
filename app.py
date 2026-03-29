@@ -469,7 +469,7 @@ if st.session_state.is_admin:
                         st.markdown("**Dates & Pricing**")
                         e_effective = st.date_input("Effective Date", value=pd.to_datetime(r["effective_date"]).date() if r.get("effective_date") else None)
                         e_ipo       = st.date_input("IPO Date",       value=pd.to_datetime(r["ipo_date"]).date()       if r.get("ipo_date")       else None)
-                        e_offer     = st.number_input("Price ($)", value=float(r["offer_price"]) if r.get("offer_price") else 0.0, step=0.01)
+                        e_offer     = st.number_input("Price ($)", value=float(r["offer_price"]) if pd.notna(r.get("offer_price")) else 0.0, step=0.01)
 
                         st.markdown("**Underwriters**")
                         uw0 = existing_uws[0] if len(existing_uws) > 0 else ""
@@ -490,41 +490,41 @@ if st.session_state.is_admin:
 
                     with ec3:
                         st.markdown("**Securities**")
-                        e_securities = st.number_input("Securities Offered", value=int(r["securities_offered"]) if r.get("securities_offered") else 0, step=100_000)
+                        e_securities = st.number_input("Securities Offered", value=int(r["securities_offered"]) if pd.notna(r.get("securities_offered")) else 0, step=100_000)
 
                         if e_has_warrants:
-                            e_warrant_count  = st.number_input("Number of Warrants", value=float(r["warrant_count"]) if r.get("warrant_count") else 0.0, step=0.5)
-                            e_warrant_strike = st.number_input("Warrant Strike Price ($)", value=float(r["warrant_strike_price"]) if r.get("warrant_strike_price") else 0.0, step=0.01)
+                            e_warrant_count  = st.number_input("Number of Warrants", value=float(r["warrant_count"]) if pd.notna(r.get("warrant_count")) else 0.0, step=0.5)
+                            e_warrant_strike = st.number_input("Warrant Strike Price ($)", value=float(r["warrant_strike_price"]) if pd.notna(r.get("warrant_strike_price")) else 0.0, step=0.01)
                         else:
                             e_warrant_count  = None
                             e_warrant_strike = None
 
                         if e_has_rights:
-                            e_rights_count = st.number_input("Number of Rights", value=float(r["rights_count"]) if r.get("rights_count") else 0.0, step=0.5)
+                            e_rights_count = st.number_input("Number of Rights", value=float(r["rights_count"]) if pd.notna(r.get("rights_count")) else 0.0, step=0.5)
                         else:
                             e_rights_count = None
 
                         st.markdown("**Overallotment**")
-                        e_oa_option         = st.number_input("Total Option (securities)", value=int(r["overallotment_option"]) if r.get("overallotment_option") else 0, step=100_000)
-                        e_oa_days           = st.number_input("Option Period (days)", value=int(r["overallotment_days"]) if r.get("overallotment_days") else 0, step=1)
+                        e_oa_option         = st.number_input("Total Option (securities)", value=int(r["overallotment_option"]) if pd.notna(r.get("overallotment_option")) else 0, step=100_000)
+                        e_oa_days           = st.number_input("Option Period (days)", value=int(r["overallotment_days"]) if pd.notna(r.get("overallotment_days")) else 0, step=1)
                         e_oa_exercised      = st.number_input("Exercised (securities)", value=int(r["overallotment_exercised"]) if pd.notna(r.get("overallotment_exercised")) else 0, step=100_000)
                         e_oa_exercised_date = st.date_input("Exercise Date", value=pd.to_datetime(r["overallotment_exercised_date"]).date() if r.get("overallotment_exercised_date") else None)
 
                     st.markdown("**Private Placement**")
                     epp1, epp2, epp3 = st.columns(3)
                     with epp1:
-                        e_pp_securities = st.number_input("PP Securities (1)", value=int(r["pp_securities"]) if r.get("pp_securities") else 0, step=100_000)
+                        e_pp_securities = st.number_input("PP Securities (1)", value=int(r["pp_securities"]) if pd.notna(r.get("pp_securities")) else 0, step=100_000)
                     with epp2:
                         e_pp_sec_type = st.selectbox("PP Securities Type (1)", PP_SECURITY_TYPES, index=_idx(PP_SECURITY_TYPES, r.get("pp_securities_type") or ""))
                     with epp3:
-                        e_pp_price = st.number_input("PP Price (1) ($)", value=float(r["pp_price"]) if r.get("pp_price") else 0.0, step=0.01)
+                        e_pp_price = st.number_input("PP Price (1) ($)", value=float(r["pp_price"]) if pd.notna(r.get("pp_price")) else 0.0, step=0.01)
                     epp4, epp5, epp6 = st.columns(3)
                     with epp4:
-                        e_pp_securities_2 = st.number_input("PP Securities (2)", value=int(r["pp_securities_2"]) if r.get("pp_securities_2") else 0, step=100_000)
+                        e_pp_securities_2 = st.number_input("PP Securities (2)", value=int(r["pp_securities_2"]) if pd.notna(r.get("pp_securities_2")) else 0, step=100_000)
                     with epp5:
                         e_pp_sec_type_2 = st.selectbox("PP Securities Type (2)", PP_SECURITY_TYPES, index=_idx(PP_SECURITY_TYPES, r.get("pp_securities_type_2") or ""))
                     with epp6:
-                        e_pp_price_2 = st.number_input("PP Price (2) ($)", value=float(r["pp_price_2"]) if r.get("pp_price_2") else 0.0, step=0.01)
+                        e_pp_price_2 = st.number_input("PP Price (2) ($)", value=float(r["pp_price_2"]) if pd.notna(r.get("pp_price_2")) else 0.0, step=0.01)
 
                     st.markdown("**Other**")
                     e_notes = st.text_area("Notes", value=r.get("notes") or "")
