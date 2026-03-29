@@ -220,6 +220,7 @@ if not df.empty:
 
                 fields = {
                     "CIK":                  row.get("cik"),
+                    "EDGAR Homepage":       f"[SEC Filing Page]({row['edgar_url']})" if row.get("edgar_url") else None,
                     "Common Stock Ticker":  row.get("ticker"),
                     "Exchange":             row.get("exchange"),
                     "Auditor":              row.get("auditor"),
@@ -231,15 +232,18 @@ if not df.empty:
                     "Securities Offered":   fmt_int(row.get("securities_offered")),
                     "Total Offering":       total_str,
                     "Warrants":             f"{fmt_warrants(row.get('warrant_count'))} @ ${row['warrant_strike_price']:,.2f}" if row.get("warrant_count") else None,
-                    "Rights":               fmt_int(row.get("rights_count")),
+                    "Rights":               fmt_warrants(row.get("rights_count")),
                     "Overallotment Option":        f"{fmt_int(row.get('overallotment_option'))} securities" if row.get("overallotment_option") else None,
                     "Overallotment Period":        f"{int(row['overallotment_days'])} days" if row.get("overallotment_days") else None,
                     "Overallotment Expiry":        oa_date_str,
                     "Overallotment Status":        oa_stat,
                     "Overallotment Exercise Date": row.get("overallotment_exercised_date"),
-                    "PP Securities":        fmt_int(row.get("pp_securities")),
-                    "PP Securities Type":   row.get("pp_securities_type"),
-                    "PP Price":             f"${row['pp_price']:,.2f}" if row.get("pp_price") else None,
+                    "PP Securities (1)":      fmt_int(row.get("pp_securities")),
+                    "PP Securities Type (1)": row.get("pp_securities_type"),
+                    "PP Price (1)":           f"${row['pp_price']:,.2f}" if row.get("pp_price") else None,
+                    "PP Securities (2)":      fmt_int(row.get("pp_securities_2")),
+                    "PP Securities Type (2)": row.get("pp_securities_type_2"),
+                    "PP Price (2)":           f"${row['pp_price_2']:,.2f}" if row.get("pp_price_2") else None,
                     "Underwriters":         fmt_underwriters(row.get("underwriters_list")),
                     "Notes":                row.get("notes"),
                 }
@@ -285,6 +289,7 @@ if st.session_state.is_admin:
                 st.markdown("**Company**")
                 a_name          = st.text_input("Company Name *")
                 a_cik           = st.text_input("CIK")
+                a_edgar_url     = st.text_input("EDGAR Homepage URL")
                 a_ticker        = st.text_input("Common Stock Ticker")
                 a_exchange      = st.selectbox("Exchange", EXCHANGES)
                 a_auditor       = st.text_input("Auditor")
@@ -325,7 +330,7 @@ if st.session_state.is_admin:
                     a_warrant_strike = None
 
                 if a_has_rights:
-                    a_rights_count = st.number_input("Number of Rights", min_value=0, step=100_000, value=None)
+                    a_rights_count = st.number_input("Number of Rights", min_value=0.0, step=0.5, value=None)
                 else:
                     a_rights_count = None
 
@@ -338,11 +343,18 @@ if st.session_state.is_admin:
             st.markdown("**Private Placement**")
             pp1, pp2, pp3 = st.columns(3)
             with pp1:
-                a_pp_securities = st.number_input("PP Securities", min_value=0, step=100_000, value=None)
+                a_pp_securities = st.number_input("PP Securities (1)", min_value=0, step=100_000, value=None)
             with pp2:
-                a_pp_sec_type = st.selectbox("PP Securities Type", PP_SECURITY_TYPES)
+                a_pp_sec_type = st.selectbox("PP Securities Type (1)", PP_SECURITY_TYPES)
             with pp3:
-                a_pp_price = st.number_input("PP Price ($)", min_value=0.0, step=0.01, value=None)
+                a_pp_price = st.number_input("PP Price (1) ($)", min_value=0.0, step=0.01, value=None)
+            pp4, pp5, pp6 = st.columns(3)
+            with pp4:
+                a_pp_securities_2 = st.number_input("PP Securities (2)", min_value=0, step=100_000, value=None)
+            with pp5:
+                a_pp_sec_type_2 = st.selectbox("PP Securities Type (2)", PP_SECURITY_TYPES)
+            with pp6:
+                a_pp_price_2 = st.number_input("PP Price (2) ($)", min_value=0.0, step=0.01, value=None)
 
             st.markdown("**Other**")
             a_notes = st.text_area("Notes")
@@ -369,6 +381,7 @@ if st.session_state.is_admin:
                     new_row = {
                         "company_name":                a_name,
                         "cik":                         a_cik or None,
+                        "edgar_url":                   a_edgar_url or None,
                         "ticker":                      a_ticker or None,
                         "exchange":                    a_exchange or None,
                         "auditor":                     a_auditor or None,
@@ -380,7 +393,7 @@ if st.session_state.is_admin:
                         "securities_offered":          int(a_securities) if a_securities else None,
                         "warrant_count":               float(a_warrant_count) if a_warrant_count else None,
                         "warrant_strike_price":        a_warrant_strike,
-                        "rights_count":                int(a_rights_count) if a_rights_count else None,
+                        "rights_count":                float(a_rights_count) if a_rights_count else None,
                         "overallotment_option":        int(a_oa_option) if a_oa_option else None,
                         "overallotment_days":          int(a_oa_days) if a_oa_days else None,
                         "overallotment_exercised":     int(a_oa_exercised) if a_oa_exercised is not None else None,
@@ -388,6 +401,9 @@ if st.session_state.is_admin:
                         "pp_securities":               int(a_pp_securities) if a_pp_securities else None,
                         "pp_securities_type":          a_pp_sec_type or None,
                         "pp_price":                    a_pp_price,
+                        "pp_securities_2":             int(a_pp_securities_2) if a_pp_securities_2 else None,
+                        "pp_securities_type_2":        a_pp_sec_type_2 or None,
+                        "pp_price_2":                  a_pp_price_2,
                         "underwriters_list":           uw_list,
                         "notes":                       a_notes or None,
                         "image_url":                   a_image or None,
@@ -442,6 +458,7 @@ if st.session_state.is_admin:
                         st.markdown("**Company**")
                         e_name          = st.text_input("Company Name", value=r.get("company_name", ""))
                         e_cik           = st.text_input("CIK", value=r.get("cik") or "")
+                        e_edgar_url     = st.text_input("EDGAR Homepage URL", value=r.get("edgar_url") or "")
                         e_ticker        = st.text_input("Common Stock Ticker", value=r.get("ticker") or "")
                         e_exchange      = st.selectbox("Exchange", EXCHANGES, index=_idx(EXCHANGES, r.get("exchange") or ""))
                         e_auditor       = st.text_input("Auditor", value=r.get("auditor") or "")
@@ -483,7 +500,7 @@ if st.session_state.is_admin:
                             e_warrant_strike = None
 
                         if e_has_rights:
-                            e_rights_count = st.number_input("Number of Rights", value=int(r["rights_count"]) if r.get("rights_count") else 0, step=100_000)
+                            e_rights_count = st.number_input("Number of Rights", value=float(r["rights_count"]) if r.get("rights_count") else 0.0, step=0.5)
                         else:
                             e_rights_count = None
 
@@ -496,11 +513,18 @@ if st.session_state.is_admin:
                     st.markdown("**Private Placement**")
                     epp1, epp2, epp3 = st.columns(3)
                     with epp1:
-                        e_pp_securities = st.number_input("PP Securities", value=int(r["pp_securities"]) if r.get("pp_securities") else 0, step=100_000)
+                        e_pp_securities = st.number_input("PP Securities (1)", value=int(r["pp_securities"]) if r.get("pp_securities") else 0, step=100_000)
                     with epp2:
-                        e_pp_sec_type = st.selectbox("PP Securities Type", PP_SECURITY_TYPES, index=_idx(PP_SECURITY_TYPES, r.get("pp_securities_type") or ""))
+                        e_pp_sec_type = st.selectbox("PP Securities Type (1)", PP_SECURITY_TYPES, index=_idx(PP_SECURITY_TYPES, r.get("pp_securities_type") or ""))
                     with epp3:
-                        e_pp_price = st.number_input("PP Price ($)", value=float(r["pp_price"]) if r.get("pp_price") else 0.0, step=0.01)
+                        e_pp_price = st.number_input("PP Price (1) ($)", value=float(r["pp_price"]) if r.get("pp_price") else 0.0, step=0.01)
+                    epp4, epp5, epp6 = st.columns(3)
+                    with epp4:
+                        e_pp_securities_2 = st.number_input("PP Securities (2)", value=int(r["pp_securities_2"]) if r.get("pp_securities_2") else 0, step=100_000)
+                    with epp5:
+                        e_pp_sec_type_2 = st.selectbox("PP Securities Type (2)", PP_SECURITY_TYPES, index=_idx(PP_SECURITY_TYPES, r.get("pp_securities_type_2") or ""))
+                    with epp6:
+                        e_pp_price_2 = st.number_input("PP Price (2) ($)", value=float(r["pp_price_2"]) if r.get("pp_price_2") else 0.0, step=0.01)
 
                     st.markdown("**Other**")
                     e_notes = st.text_area("Notes", value=r.get("notes") or "")
@@ -510,6 +534,7 @@ if st.session_state.is_admin:
                         update = {
                             "company_name":                e_name,
                             "cik":                         e_cik or None,
+                            "edgar_url":                   e_edgar_url or None,
                             "ticker":                      e_ticker or None,
                             "exchange":                    e_exchange or None,
                             "auditor":                     e_auditor or None,
@@ -521,7 +546,7 @@ if st.session_state.is_admin:
                             "securities_offered":          int(e_securities) if e_securities else None,
                             "warrant_count":               float(e_warrant_count) if e_warrant_count else None,
                             "warrant_strike_price":        e_warrant_strike or None,
-                            "rights_count":                int(e_rights_count) if e_rights_count else None,
+                            "rights_count":                float(e_rights_count) if e_rights_count else None,
                             "overallotment_option":        int(e_oa_option) if e_oa_option else None,
                             "overallotment_days":          int(e_oa_days) if e_oa_days else None,
                             "overallotment_exercised":     int(e_oa_exercised) if pd.notna(e_oa_exercised) else None,
@@ -529,6 +554,9 @@ if st.session_state.is_admin:
                             "pp_securities":               int(e_pp_securities) if e_pp_securities else None,
                             "pp_securities_type":          e_pp_sec_type or None,
                             "pp_price":                    e_pp_price or None,
+                            "pp_securities_2":             int(e_pp_securities_2) if e_pp_securities_2 else None,
+                            "pp_securities_type_2":        e_pp_sec_type_2 or None,
+                            "pp_price_2":                  e_pp_price_2 or None,
                             "underwriters_list":           e_uw_list,
                             "notes":                       e_notes or None,
                             "image_url":                   e_image or None,
