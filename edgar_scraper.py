@@ -21,7 +21,7 @@ EDGAR_SEARCH = "https://efts.sec.gov/LATEST/search-index?q=%22EFFECT%22&dateRang
 FILING_URL   = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=EFFECT&dateb=&owner=include&count=10"
 
 SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.environ.get("SMTP_PORT", 465))
+SMTP_PORT = int(os.environ.get("SMTP_PORT") or 465)
 SMTP_USER = os.environ.get("SMTP_USER", "")
 SMTP_PASS = os.environ.get("SMTP_PASS", "")
 EMAIL_TO  = os.environ.get("EMAIL_TO", "")
