@@ -527,8 +527,8 @@ if st.session_state.is_admin:
 
                     with ec2:
                         st.markdown("**Dates & Pricing**")
-                        e_effective = st.date_input("Effective Date", value=pd.to_datetime(r["effective_date"]).date() if pd.notna(r.get("effective_date")) else None
-                        e_ipo       = st.date_input("IPO Date",       value=pd.to_datetime(r["ipo_date"]).date() if pd.notna(r.get("ipo_date")) else None
+                        e_effective = st.date_input("Effective Date", value=pd.to_datetime(r["effective_date"]).date() if pd.notna(r.get("effective_date")) else None)
+                        e_ipo       = st.date_input("IPO Date",       value=pd.to_datetime(r["ipo_date"]).date() if pd.notna(r.get("ipo_date")) else None)
                         e_offer     = st.number_input("Price ($)", value=float(r["offer_price"]) if pd.notna(r.get("offer_price")) else 0.0, step=0.01)
 
                         st.markdown("**Underwriters**")
@@ -567,7 +567,7 @@ if st.session_state.is_admin:
                         st.markdown("**Overallotment**")
                         e_oa_option         = st.number_input("Total Option (securities)", value=int(r["overallotment_option"]) if pd.notna(r.get("overallotment_option")) else 0, step=100_000)
                         e_oa_exercised      = st.number_input("Exercised (securities)", value=int(r["overallotment_exercised"]) if pd.notna(r.get("overallotment_exercised")) else 0, step=100_000)
-                        e_oa_exercised_date = st.date_input("Exercise Date", value=pd.to_datetime(r["overallotment_exercised_date"]).date() if pd.notna(r.get("overallotment_exercised_date")) else None
+                        e_oa_exercised_date = st.date_input("Exercise Date", value=pd.to_datetime(r["overallotment_exercised_date"]).date() if pd.notna(r.get("overallotment_exercised_date")) else None)
 
                     st.markdown("**Private Placement**")
                     epp1, epp2, epp3 = st.columns(3)
