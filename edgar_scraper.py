@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 
 EDGAR_SEARCH_URL = "https://efts.sec.gov/LATEST/search-index"
 EDGAR_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{}.json"
-EDGAR_FILING_BASE = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={}&type=EFFECT&dateb=&owner=include&count=5"
+EDGAR_FILING_BASE = "https://www.sec.gov/edgar/browse/?CIK={}"
 
 # SEC requires a descriptive User-Agent
 HEADERS = {
@@ -191,7 +191,7 @@ def parse_filings(raw_hits: list[dict]) -> list[dict]:
                     if cik and accession_path
                     else "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=EFFECT"
                 ),
-                "edgar_url": EDGAR_FILING_BASE.format(cik) if cik else "",
+                "edgar_url": EDGAR_FILING_BASE.format(cik.zfill(10)) if cik else "",
             }
         )
     return parsed
@@ -286,7 +286,7 @@ def build_html_email(filings: list[dict], filing_date: date) -> str:
         body = (
             make_table(
                 spacs,
-                "Suspected SPACs &#9733; (SIC 6770)",
+                "Special Purpose Acquisition Company (SPAC) Filings",
                 "Blank check companies — likely SPAC IPOs or follow-on SPAC registrations.",
                 show_pcaob=True,
             )
@@ -305,12 +305,11 @@ def build_html_email(filings: list[dict], filing_date: date) -> str:
         "<body style='font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:#f9fafb;margin:0;padding:0;'>"
         "<div style='max-width:900px;margin:32px auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.1);'>"
         "<div style='background:#1a3a6e;padding:24px 32px;color:#fff;'>"
-        "<h1 style='margin:0;font-size:20px;font-weight:700;'>EDGAR EFFECT Filings</h1>"
+        "<h1 style='margin:0;font-size:20px;font-weight:700;'>Filed Effective Forms on EDGAR</h1>"
         "<p style='margin:6px 0 0;opacity:0.85;font-size:14px;'>" + date_str + "</p>"
         "</div>"
         "<div style='padding:24px 32px;'>"
-        "<p style='color:#555;margin:0 0 8px;'><strong>" + filing_count_label + "</strong> found on EDGAR. "
-        "&#9733; = SIC 6770 (SPAC / Blank Check Company)</p>"
+        "<p style='color:#555;margin:0 0 8px;'><strong>" + filing_count_label + "</strong> found on EDGAR.</p>"
         + body +
         "</div>"
         "<div style='padding:16px 32px;background:#f4f5f7;font-size:12px;color:#888;'>"
@@ -391,7 +390,7 @@ def main() -> None:
     filings.sort(key=lambda f: (category_order.get(f["category"], 99), f["company"]))
 
     date_label = filing_date.strftime("%Y-%m-%d")
-    subject = f"EDGAR EFFECT Filings — {date_label} ({len(filings)} filing{'s' if len(filings) != 1 else ''})"
+    subject = f"Filed Effective Forms on EDGAR — {date_label} ({len(filings)} filing{'s' if len(filings) != 1 else ''})"
     html = build_html_email(filings, filing_date)
     send_email(subject, html)
 
