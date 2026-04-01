@@ -2,6 +2,9 @@ import streamlit as st
 from supabase import create_client, Client
 import pandas as pd
 from datetime import date, datetime, timedelta
+import requests
+import zipfile
+import io
 
 st.set_page_config(
     page_title="SPAC Tracker",
@@ -72,6 +75,24 @@ def load_watchlist() -> pd.DataFrame:
         return pd.DataFrame()
     return pd.DataFrame(resp.data)
 
+@st.cache_data(ttl=300)
+def load_spac_audit_partners() -> pd.DataFrame:
+    """Load pcaob_partners rows only for partner IDs referenced in the ipos table."""
+    ipos_df = load_ipos()
+    partner_ids = ipos_df["audit_partner_id"].dropna().unique().tolist()
+    if not partner_ids:
+        return pd.DataFrame()
+    resp = (
+        anon_client()
+        .table("pcaob_partners")
+        .select("*")
+        .in_("engagement_partner_id", partner_ids)
+        .execute()
+    )
+    if not resp.data:
+        return pd.DataFrame()
+    return pd.DataFrame(resp.data)
+
 def refresh():
     st.cache_data.clear()
 
@@ -101,7 +122,6 @@ def fmt_warrants(val):
         return str(val)
 
 def oa_status(option, exercised):
-    """Compute overallotment status from total option and exercised amount."""
     if not option:
         return None
     if exercised is None:
@@ -212,29 +232,28 @@ else:
 
 # ── Analytics ─────────────────────────────────────────────────────────────────
 
-if not df.empty and "ipo_date" in df.columns:
-    with st.expander("Analytics"):
-        df_dated = load_ipos()
-        df_dated = df_dated[df_dated["ipo_date"].notna()].copy()
-        df_dated["ipo_date"] = pd.to_datetime(df_dated["ipo_date"])
+df_all = load_ipos()
+df_dated = df_all[df_all["ipo_date"].notna()].copy()
+if not df_dated.empty:
+    df_dated["ipo_date"] = pd.to_datetime(df_dated["ipo_date"])
+    years_available = sorted(df_dated["ipo_date"].dt.year.unique().tolist(), reverse=True)
+    if years_available:
+        sel_year = st.selectbox("Year", years_available, key="chart_year")
+        df_year  = df_dated[df_dated["ipo_date"].dt.year == sel_year]
 
-        years_available = sorted(df_dated["ipo_date"].dt.year.unique().tolist(), reverse=True)
-        if years_available:
-            sel_year = st.selectbox("Year", years_available, key="chart_year")
-            df_year  = df_dated[df_dated["ipo_date"].dt.year == sel_year]
+        MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+        monthly = (
+            df_year.groupby(df_year["ipo_date"].dt.month)
+            .size()
+            .reindex(range(1, 13), fill_value=0)
+        )
+        monthly.index = MONTH_NAMES
+        monthly.name  = "SPAC IPOs"
 
-            MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
-            monthly = (
-                df_year.groupby(df_year["ipo_date"].dt.month)
-                .size()
-                .reindex(range(1, 13), fill_value=0)
-            )
-            monthly.index = MONTH_NAMES
-            monthly.name  = "SPAC IPOs"
-
-            st.markdown(f"**SPAC IPOs by Month — {sel_year}**")
-            st.bar_chart(monthly, y_label="# of IPOs", x_label="Month")
-            st.caption(f"{len(df_year)} IPO(s) in {sel_year}")
+        st.markdown(f"**SPAC IPOs by Month — {sel_year}**")
+        st.bar_chart(monthly, y_label="# of IPOs", x_label="Month")
+        st.caption(f"{len(df_year)} IPO(s) in {sel_year}")
+    st.divider()
 
 # ── Detail view ───────────────────────────────────────────────────────────────
 
@@ -303,8 +322,6 @@ if not df.empty:
                 if img:
                     st.markdown(f"<img src='{img}' style='width:100%;border-radius:8px;'>", unsafe_allow_html=True)
 
-
-
 # ── Admin panel ───────────────────────────────────────────────────────────────
 
 if st.session_state.is_admin:
@@ -314,7 +331,6 @@ if st.session_state.is_admin:
 
     # ── Add ───────────────────────────────────────────────────────────────────
     with tab_add:
-        # Outside-form selectors for instant reactivity
         sel_col1, sel_col2 = st.columns(2)
         with sel_col1:
             st.markdown("##### Securities Type")
@@ -326,6 +342,13 @@ if st.session_state.is_admin:
             a_uw_mode = st.radio("Underwriter count", ["Solo", "Multiple"], horizontal=True, key="add_uw_mode")
 
         with st.form("add_form", clear_on_submit=True):
+            st.markdown("**Initial Filings**")
+            fi1, fi2 = st.columns(2)
+            with fi1:
+                a_s1_url = st.text_input("S-1 URL")
+            with fi2:
+                a_8k_url = st.text_input("8-K URL")
+
             c1, c2, c3 = st.columns(3)
 
             with c1:
@@ -401,13 +424,6 @@ if st.session_state.is_admin:
 
             st.markdown("**Other**")
             a_notes = st.text_area("Notes")
-
-            st.markdown("**Initial Filings**")
-            fi1, fi2 = st.columns(2)
-            with fi1:
-                a_s1_url = st.text_input("S-1 URL")
-            with fi2:
-                a_8k_url = st.text_input("8-K URL")
 
             if st.form_submit_button("Add Entry", type="primary"):
                 if not a_name:
@@ -736,3 +752,130 @@ if st.session_state.is_admin:
                 st.success("Removed.")
                 refresh()
                 st.rerun()
+
+# ── SPAC Audit Partners ────────────────────────────────────────────────────────
+
+st.divider()
+st.subheader("SPAC Audit Partners")
+st.caption("Audit engagement partners linked to SPACs in this database, sourced from PCAOB Form AP filings.")
+
+_ipos_all = load_ipos()
+_ipos_with_pid = _ipos_all[_ipos_all["audit_partner_id"].notna()][["company_name", "audit_partner_id"]].copy()
+
+if _ipos_with_pid.empty:
+    st.info("No SPACs in the database have an Audit Partner ID assigned yet.")
+else:
+    _partner_summary = (
+        _ipos_with_pid
+        .groupby("audit_partner_id")
+        .agg(spac_count=("company_name", "count"),
+             companies=("company_name", lambda x: ", ".join(sorted(x))))
+        .reset_index()
+    )
+
+    _pcaob = load_spac_audit_partners()
+    if not _pcaob.empty:
+        _merged = _partner_summary.merge(
+            _pcaob[["engagement_partner_id", "first_name", "middle_name", "last_name", "suffix"]],
+            left_on="audit_partner_id",
+            right_on="engagement_partner_id",
+            how="left",
+        )
+
+        def _full_name(r):
+            parts = [r.get("first_name"), r.get("middle_name"), r.get("last_name"), r.get("suffix")]
+            name = " ".join(p for p in parts if pd.notna(p) and str(p).strip())
+            return name if name else f"ID: {r['audit_partner_id']}"
+
+        _merged["partner_name"] = _merged.apply(_full_name, axis=1)
+        _display = _merged[["partner_name", "audit_partner_id", "spac_count", "companies"]].sort_values("spac_count", ascending=False)
+        st.dataframe(
+            _display,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "partner_name":     st.column_config.TextColumn("Partner Name"),
+                "audit_partner_id": st.column_config.TextColumn("Partner ID"),
+                "spac_count":       st.column_config.NumberColumn("# SPACs", format="%.0f"),
+                "companies":        st.column_config.TextColumn("Companies"),
+            },
+        )
+    else:
+        _partner_summary_display = _partner_summary.sort_values("spac_count", ascending=False)
+        st.dataframe(
+            _partner_summary_display,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "audit_partner_id": st.column_config.TextColumn("Partner ID"),
+                "spac_count":       st.column_config.NumberColumn("# SPACs", format="%.0f"),
+                "companies":        st.column_config.TextColumn("Companies"),
+            },
+        )
+        st.caption("Partner names not yet loaded. Use the Refresh button below to populate from PCAOB.")
+
+if st.session_state.is_admin:
+    st.markdown("**Refresh PCAOB Partner Data**")
+    st.caption("Downloads Form AP data from PCAOB and upserts unique engagement partners into the database. Run monthly.")
+    if st.button("Refresh PCAOB Data", key="refresh_pcaob"):
+        PCAOB_ZIP_URL = "https://pcaobus.org/assets/PCAOBFiles/FirmFilings.zip"
+        with st.spinner("Downloading PCAOB Form AP data…"):
+            try:
+                r = requests.get(PCAOB_ZIP_URL, timeout=120)
+                r.raise_for_status()
+            except Exception as e:
+                st.error(f"Download failed: {e}")
+                st.stop()
+
+        with st.spinner("Parsing ZIP…"):
+            try:
+                with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+                    csv_files = [n for n in zf.namelist() if n.lower().endswith(".csv")]
+                    if not csv_files:
+                        st.error("No CSV file found inside the ZIP.")
+                        st.stop()
+                    csv_name = max(csv_files, key=lambda n: zf.getinfo(n).file_size)
+                    with zf.open(csv_name) as f:
+                        try:
+                            df_raw = pd.read_csv(f, dtype=str, encoding="utf-8")
+                        except UnicodeDecodeError:
+                            df_raw = pd.read_csv(f, dtype=str, encoding="latin-1")
+            except Exception as e:
+                st.error(f"Failed to parse ZIP: {e}")
+                st.stop()
+
+        REQUIRED = [
+            "Engagement Partner ID",
+            "Engagement Partner Last Name",
+            "Engagement Partner First Name",
+            "Engagement Partner Middle Name",
+            "Engagement Partner Suffix",
+        ]
+        missing = [c for c in REQUIRED if c not in df_raw.columns]
+        if missing:
+            st.error(f"Expected columns not found in CSV: {missing}")
+            st.stop()
+
+        with st.spinner("Deduplicating and upserting…"):
+            df_partners = (
+                df_raw[REQUIRED]
+                .dropna(subset=["Engagement Partner ID"])
+                .drop_duplicates(subset=["Engagement Partner ID"])
+                .copy()
+            )
+            df_partners.columns = ["engagement_partner_id", "last_name", "first_name", "middle_name", "suffix"]
+            df_partners = df_partners.where(pd.notna(df_partners), None)
+            now_str = datetime.utcnow().isoformat()
+            df_partners["updated_at"] = now_str
+
+            rows = df_partners.to_dict(orient="records")
+            BATCH = 500
+            for i in range(0, len(rows), BATCH):
+                service_client().table("pcaob_partners").upsert(
+                    rows[i : i + BATCH],
+                    on_conflict="engagement_partner_id",
+                ).execute()
+
+        st.success(f"Done — {len(rows):,} unique engagement partners loaded.")
+        refresh()
+        st.rerun()
