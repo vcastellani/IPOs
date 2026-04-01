@@ -7,7 +7,15 @@ on:
   workflow_dispatch:
     inputs:
       date:
-        description: 'Override filing date (YYYY-MM-DD). Defaults to previous business day.'
+        description: 'Single date override (YYYY-MM-DD). Defaults to previous business day.'
+        required: false
+        default: ''
+      start_date:
+        description: 'Range mode start date (YYYY-MM-DD). Use with end_date to backfill.'
+        required: false
+        default: ''
+      end_date:
+        description: 'Range mode end date (YYYY-MM-DD). Use with start_date to backfill.'
         required: false
         default: ''
 
@@ -31,11 +39,14 @@ jobs:
       - name: Run EDGAR scraper
         env:
           EDGAR_USER_AGENT: ${{ secrets.EDGAR_USER_AGENT }}
-          SMTP_HOST:     ${{ secrets.SMTP_HOST }}
-          SMTP_PORT:     ${{ secrets.SMTP_PORT }}
-          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
-          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-          EMAIL_FROM:    ${{ secrets.EMAIL_FROM }}
-          EMAIL_TO:      ${{ secrets.EMAIL_TO }}
-          EDGAR_DATE:    ${{ github.event.inputs.date }}
+          SMTP_HOST:        ${{ secrets.SMTP_HOST }}
+          SMTP_PORT:        ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME:    ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD:    ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_FROM:       ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO:         ${{ secrets.EMAIL_TO }}
+          # Date controls (all optional)
+          EDGAR_DATE:       ${{ github.event.inputs.date }}
+          EDGAR_START_DATE: ${{ github.event.inputs.start_date }}
+          EDGAR_END_DATE:   ${{ github.event.inputs.end_date }}
         run: python edgar_scraper.py
