@@ -301,7 +301,9 @@ if not df.empty:
             with col_img:
                 img = row.get("image_url")
                 if img:
-                    st.image(img, use_container_width=True)
+                    st.markdown(f"<img src='{img}' style='width:100%;border-radius:8px;'>", unsafe_allow_html=True)
+
+
 
 # ── Admin panel ───────────────────────────────────────────────────────────────
 
