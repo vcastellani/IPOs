@@ -864,7 +864,7 @@ if st.session_state.is_admin:
                 .copy()
             )
             df_partners.columns = ["engagement_partner_id", "last_name", "first_name", "middle_name", "suffix"]
-            df_partners = df_partners.where(pd.notna(df_partners), None)
+            df_partners = df_partners.astype(object).where(pd.notna(df_partners), None)
             now_str = datetime.utcnow().isoformat()
             df_partners["updated_at"] = now_str
 
