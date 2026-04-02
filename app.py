@@ -30,7 +30,7 @@ PP_SECURITY_TYPES = [
     "Units - Shares and Rights",
     "Units - Shares, Warrants, and Rights",
 ]
-FILING_TYPES = ["S-1", "S-1/A", "8-K (IPO)", "8-K (Combination)", "Other"]
+FILING_TYPES = ["S-1", "S-1/A", "8-K (IPO)", "8-K (Combination)", "424B4", "Other"]
 
 # ── Supabase connections ───────────────────────────────────────────────────────
 
@@ -343,11 +343,13 @@ if st.session_state.is_admin:
 
         with st.form("add_form", clear_on_submit=True):
             st.markdown("**Initial Filings**")
-            fi1, fi2 = st.columns(2)
+            fi1, fi2, fi3 = st.columns(3)
             with fi1:
                 a_s1_url = st.text_input("S-1 URL")
             with fi2:
                 a_8k_url = st.text_input("8-K URL")
+            with fi3:
+                a_prospectus_url = st.text_input("Prospectus (424B4) URL")
 
             c1, c2, c3 = st.columns(3)
 
@@ -436,6 +438,8 @@ if st.session_state.is_admin:
                         initial_filings.append({"type": "S-1", "url": a_s1_url})
                     if a_8k_url:
                         initial_filings.append({"type": "8-K (IPO)", "url": a_8k_url})
+                    if a_prospectus_url:
+                        initial_filings.append({"type": "424B4", "url": a_prospectus_url})
 
                     new_row = {
                         "company_name":           a_name,
