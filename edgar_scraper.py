@@ -104,34 +104,62 @@ def fetch_effect_filings(filing_date: date) -> list[dict]:
     resp.raise_for_status()
 
     # Parse the fixed-width company.idx file.
-    # Columns (0-indexed character positions):
-    #   Company Name : 0–61   (62 chars)
-    #   Form Type    : 62–73  (12 chars)
-    #   CIK          : 74–85  (12 chars)
-    #   Date Filed   : 86–97  (12 chars)
-    #   Filename     : 98–end
+    # Column positions are read dynamically from the header line so the
+    # parser is robust to any variation in the SEC's file layout.
+    lines = resp.text.splitlines()
+
+    # Locate the header and separator lines to determine column positions
+    col_company = col_form = col_cik = col_date = col_file = None
+    data_start_idx = 0
+
+    for i, line in enumerate(lines):
+        if "Form Type" in line and "CIK" in line and "Date Filed" in line:
+            col_company = line.index("Company Name") if "Company Name" in line else 0
+            col_form    = line.index("Form Type")
+            col_cik     = line.index("CIK")
+            col_date    = line.index("Date Filed")
+            col_file    = line.index("Filename")
+        if line.startswith("---") and col_form is not None:
+            data_start_idx = i + 1
+            break
+
+    if col_form is None:
+        log.error("Could not locate header in company.idx — file format may have changed.")
+        return []
+
+    log.info("Column positions — Company:%d Form:%d CIK:%d Date:%d File:%d",
+             col_company, col_form, col_cik, col_date, col_file)
+
+    # Log a sample data line so we can verify column alignment
+    sample = next((l for l in lines[data_start_idx:] if len(l) > col_file), None)
+    if sample:
+        log.info("Sample line  : %r", sample[:120])
+        log.info("Parsed fields: company=%r form=%r cik=%r date=%r",
+                 sample[col_company:col_form].strip(),
+                 sample[col_form:col_cik].strip(),
+                 sample[col_cik:col_date].strip(),
+                 sample[col_date:col_file].strip())
+
     filings = []
-    data_started = False
+    total_effect = 0
 
-    for line in resp.text.splitlines():
-        if not data_started:
-            if line.startswith("---"):
-                data_started = True
+    for line in lines[data_start_idx:]:
+        if len(line) <= col_file:
             continue
 
-        if len(line) < 98:
-            continue
+        form_type = line[col_form:col_cik].strip()
+        file_date  = line[col_date:col_file].strip()
 
-        form_type = line[62:74].strip()
-        file_date  = line[86:98].strip()
+        if form_type == "EFFECT":
+            total_effect += 1
 
         if form_type != "EFFECT" or file_date != date_str:
             continue
 
-        company_name = line[0:62].strip()
-        cik_padded   = line[74:86].strip().zfill(10)
+        company_name = line[col_company:col_form].strip()
+        cik_padded   = line[col_cik:col_date].strip().zfill(10)
         cik          = cik_padded.lstrip("0") or "0"
-        filename     = line[98:].strip()
+        filename     = line[col_file:].strip()
 
         # Derive accession number from filename
         # e.g. edgar/data/1234567/0001234567-25-000001.txt
@@ -157,7 +185,8 @@ def fetch_effect_filings(filing_date: date) -> list[dict]:
             "edgar_url": EDGAR_FILING_BASE.format(cik_padded) if cik else "",
         })
 
-    log.info("Found %d EFFECT filings for %s in Q%d %d index", len(filings), date_str, quarter, year)
+    log.info("Found %d EFFECT filings for %s (out of %d total EFFECT rows in Q%d %d index)",
+             len(filings), date_str, total_effect, quarter, year)
     return filings
 
 
