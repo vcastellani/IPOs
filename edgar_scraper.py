@@ -16,13 +16,13 @@ from email.mime.text import MIMEText
 import requests
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
     stream=sys.stdout,
 )
 log = logging.getLogger(__name__)
 
-EDGAR_SEARCH_URL = "https://efts.sec.gov/LATEST/search-index"
+EDGAR_FULL_INDEX_URL = "https://www.sec.gov/Archives/edgar/full-index/{year}/QTR{quarter}/company.idx"
 EDGAR_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{}.json"
 EDGAR_FILING_BASE = "https://www.sec.gov/edgar/browse/?CIK={}"
 
@@ -67,70 +67,104 @@ def get_previous_business_day() -> date:
     return today - timedelta(days=1)
 
 
+def quarter_for_date(d: date) -> int:
+    return (d.month - 1) // 3 + 1
+
+
 def fetch_effect_filings(filing_date: date) -> list[dict]:
-    """Return all EFFECT filings from EDGAR for the given date."""
+    """
+    Return all EFFECT filings from the EDGAR full-index for the given date.
+    Uses the quarterly company.idx file rather than the EFTS search API,
+    because EFFECT forms contain almost no text and are not indexed by EFTS.
+    """
     date_str = filing_date.strftime("%Y-%m-%d")
-    log.info("Fetching EFFECT filings for %s", date_str)
+    year     = filing_date.year
+    quarter  = quarter_for_date(filing_date)
 
-    filings: list[dict] = []
-    from_idx = 0
+    idx_url = EDGAR_FULL_INDEX_URL.format(year=year, quarter=quarter)
+    log.info("Fetching full-index for %s (Q%d %d): %s", date_str, quarter, year, idx_url)
 
-    while True:
-        # Retry up to 3 times on 5xx server errors
-        for attempt in range(3):
-            resp = requests.get(
-                EDGAR_SEARCH_URL,
-                params={
-                    "type": "EFFECT",
-                    "dateRange": "custom",
-                    "startdt": date_str,
-                    "enddt": date_str,
-                    "from": from_idx,
-                    "size": 100,
-                },
-                headers=HEADERS,
-                timeout=30,
-            )
-            if resp.status_code < 500:
-                break
-            wait = 2 ** attempt
-            log.warning("EDGAR returned %d, retrying in %ds...", resp.status_code, wait)
-            time.sleep(wait)
-
-        if resp.status_code >= 500:
-            log.error("EDGAR search unavailable (HTTP %d) after retries — skipping.", resp.status_code)
-            return []
-
-        resp.raise_for_status()
-        data = resp.json()
-
-        # Debug: log the response structure for the first request
-        if from_idx == 0:
-            log.debug("API response keys: %s", list(data.keys()))
-            if "hits" in data:
-                log.debug("hits keys: %s", list(data["hits"].keys()))
-
-        hits = data.get("hits", {}).get("hits", [])
-        if not hits:
-            log.debug("No hits found in response")
+    # Retry up to 3 times on 5xx errors
+    for attempt in range(3):
+        resp = requests.get(idx_url, headers=HEADERS, timeout=60)
+        if resp.status_code < 500:
             break
+        wait = 2 ** attempt
+        log.warning("EDGAR returned %d, retrying in %ds...", resp.status_code, wait)
+        time.sleep(wait)
 
-        filings.extend(hits)
-        total = data.get("hits", {}).get("total", {}).get("value", 0)
-        from_idx += len(hits)
-        log.info("  Retrieved %d / %d filings", from_idx, total)
+    if resp.status_code == 404:
+        log.warning("Full-index not yet available for Q%d %d — skipping.", quarter, year)
+        return []
 
-        if from_idx >= total:
-            break
+    if resp.status_code >= 500:
+        log.error("EDGAR full-index unavailable (HTTP %d) after retries — skipping.", resp.status_code)
+        return []
 
-        time.sleep(0.15)   # be polite to SEC servers
+    resp.raise_for_status()
 
+    # Parse the fixed-width company.idx file.
+    # Columns (0-indexed character positions):
+    #   Company Name : 0–61   (62 chars)
+    #   Form Type    : 62–73  (12 chars)
+    #   CIK          : 74–85  (12 chars)
+    #   Date Filed   : 86–97  (12 chars)
+    #   Filename     : 98–end
+    filings = []
+    data_started = False
+
+    for line in resp.text.splitlines():
+        if not data_started:
+            if line.startswith("---"):
+                data_started = True
+            continue
+
+        if len(line) < 98:
+            continue
+
+        form_type = line[62:74].strip()
+        file_date  = line[86:98].strip()
+
+        if form_type != "EFFECT" or file_date != date_str:
+            continue
+
+        company_name = line[0:62].strip()
+        cik_padded   = line[74:86].strip().zfill(10)
+        cik          = cik_padded.lstrip("0") or "0"
+        filename     = line[98:].strip()
+
+        # Derive accession number from filename
+        # e.g. edgar/data/1234567/0001234567-25-000001.txt
+        accession      = ""
+        accession_path = ""
+        if filename:
+            basename = filename.rsplit("/", 1)[-1]
+            accession = basename.replace(".txt", "").replace(".htm", "")
+            accession_path = accession.replace("-", "")
+
+        filings.append({
+            "company":           company_name,
+            "cik":               cik,
+            "sic":               "",   # filled in during enrichment
+            "accession":         accession,
+            "file_date":         file_date,
+            "first_filing_date": "",   # filled in during enrichment
+            "filing_url": (
+                f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_path}/"
+                if cik and accession_path
+                else "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=EFFECT"
+            ),
+            "edgar_url": EDGAR_FILING_BASE.format(cik_padded) if cik else "",
+        })
+
+    log.info("Found %d EFFECT filings for %s in Q%d %d index", len(filings), date_str, quarter, year)
     return filings
 
 
 def get_company_info(cik: str) -> dict:
     """
     Fetch company submissions and return:
+      - sic: SIC code string
       - first_filing_date: earliest filing date on record (YYYY-MM-DD string)
       - effect_count: total number of EFFECT filings in recent history
       - category: offering type based on registration form history
@@ -140,9 +174,12 @@ def get_company_info(cik: str) -> dict:
         resp = requests.get(url, headers=HEADERS, timeout=15)
         resp.raise_for_status()
         data = resp.json()
+
+        sic = str(data.get("sic", "") or "")
+
         recent = data.get("filings", {}).get("recent", {})
-        forms = recent.get("form", [])
-        dates = recent.get("filingDate", [])
+        forms  = recent.get("form", [])
+        dates  = recent.get("filingDate", [])
 
         # Earliest filing date — dates are most-recent-first, so take the last one
         first_filing_date = dates[-1] if dates else ""
@@ -164,58 +201,19 @@ def get_company_info(cik: str) -> dict:
                 break
 
         return {
+            "sic":               sic,
             "first_filing_date": first_filing_date,
-            "effect_count": effect_count,
-            "category": category,
+            "effect_count":      effect_count,
+            "category":          category,
         }
     except requests.HTTPError as exc:
         log.warning("HTTP error fetching submissions for CIK %s: %s", cik, exc)
-        return {"first_filing_date": "", "effect_count": 0, "category": "Unknown"}
+        return {"sic": "", "first_filing_date": "", "effect_count": 0, "category": "Unknown"}
     except Exception as exc:
         log.warning("Error fetching submissions for CIK %s: %s", cik, exc)
-        return {"first_filing_date": "", "effect_count": 0, "category": "Unknown"}
+        return {"sic": "", "first_filing_date": "", "effect_count": 0, "category": "Unknown"}
     finally:
         time.sleep(0.15)
-
-
-def parse_filings(raw_hits: list[dict]) -> list[dict]:
-    """Flatten raw EDGAR search hits into clean dicts."""
-    parsed = []
-    for hit in raw_hits:
-        src = hit.get("_source", {})
-
-        # display_names format: "Company Name  (TICKER)  (CIK 0001234567)"
-        display_names = src.get("display_names", [])
-        company = display_names[0].split("(")[0].strip() if display_names else "N/A"
-
-        # ciks is a list of zero-padded CIK strings
-        ciks = src.get("ciks", [])
-        cik = ciks[0].lstrip("0") if ciks else ""
-
-        # accession number is in 'adsh' field
-        accession = src.get("adsh", "")
-        accession_path = accession.replace("-", "")
-
-        sics = src.get("sics", [])
-        sic = sics[0] if sics else ""
-
-        parsed.append(
-            {
-                "company": company,
-                "cik": cik,
-                "sic": sic,
-                "accession": accession,
-                "file_date": src.get("file_date", ""),
-                "first_filing_date": "",   # filled in during enrichment
-                "filing_url": (
-                    f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_path}/"
-                    if cik and accession_path
-                    else "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=EFFECT"
-                ),
-                "edgar_url": EDGAR_FILING_BASE.format(cik.zfill(10)) if cik else "",
-            }
-        )
-    return parsed
 
 
 # ---------------------------------------------------------------------------
@@ -408,27 +406,28 @@ def process_one_day(filing_date: date) -> None:
     """Fetch, enrich, and email filings for a single date."""
     log.info("Processing %s", filing_date)
 
-    raw_hits = fetch_effect_filings(filing_date)
-    if not raw_hits:
+    filings = fetch_effect_filings(filing_date)
+    if not filings:
         log.info("No EFFECT filings found for %s — skipping email.", filing_date)
         return
 
-    filings = parse_filings(raw_hits)
     log.info("Enriching %d filings...", len(filings))
     for f in filings:
         if f["cik"]:
             info = get_company_info(f["cik"])
-            f["category"] = info["category"]
+            f["sic"]               = info["sic"]
+            f["category"]          = info["category"]
             f["first_filing_date"] = info["first_filing_date"]
-            f["effect_count"] = info["effect_count"]
+            f["effect_count"]      = info["effect_count"]
         else:
-            f["category"] = "Unknown"
+            f["sic"]               = ""
+            f["category"]          = "Unknown"
             f["first_filing_date"] = ""
-            f["effect_count"] = 0
-        log.info("  %s -> %s (first filing: %s, effect count: %d)",
-                 f["company"], f["category"], f["first_filing_date"], f["effect_count"])
+            f["effect_count"]      = 0
+        log.info("  %s -> SIC:%s %s (first filing: %s, effect count: %d)",
+                 f["company"], f["sic"], f["category"], f["first_filing_date"], f["effect_count"])
 
-    filings.sort(key=lambda f: (CATEGORY_ORDER.get(f["category"], 99), f["company"]))
+    filings.sort(key=lambda f: (CATEGORY_ORDER.get(f.get("category", "Unknown"), 99), f["company"]))
 
     date_label = filing_date.strftime("%Y-%m-%d")
     subject = f"Filed Effective Forms on EDGAR — {date_label} ({len(filings)} filing{'s' if len(filings) != 1 else ''})"
