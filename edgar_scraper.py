@@ -16,7 +16,7 @@ from email.mime.text import MIMEText
 import requests
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s %(levelname)s %(message)s",
     stream=sys.stdout,
 )
@@ -26,6 +26,7 @@ EDGAR_SEARCH_URL = "https://efts.sec.gov/LATEST/search-index"
 EDGAR_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{}.json"
 EDGAR_FILING_BASE = "https://www.sec.gov/edgar/browse/?CIK={}"
 
+# SEC requires a descriptive User-Agent
 HEADERS = {
     "User-Agent": os.environ.get(
         "EDGAR_USER_AGENT", "IPOTracker/1.0 research@example.com"
@@ -34,6 +35,7 @@ HEADERS = {
     "Accept": "application/json",
 }
 
+# Registration form types → offering category
 FORM_CATEGORIES = {
     "S-1": "IPO",
     "S-1/A": "IPO",
@@ -52,42 +54,21 @@ FORM_CATEGORIES = {
     "F-4/A": "Merger (Foreign)",
 }
 
-CATEGORY_ORDER = {
-    "IPO": 0,
-    "IPO (Foreign)": 1,
-    "REIT IPO": 2,
-    "SEO / Shelf": 3,
-    "SEO / Shelf (Foreign)": 4,
-    "Merger / SPAC": 5,
-    "Merger (Foreign)": 6,
-    "Other": 7,
-    "Unknown": 8,
-}
-
 
 # ---------------------------------------------------------------------------
 # Data fetching
 # ---------------------------------------------------------------------------
 
 def get_previous_business_day() -> date:
+    """Return yesterday, rolling back over weekends."""
     today = date.today()
-    if today.weekday() == 0:
+    if today.weekday() == 0:      # Monday → Friday
         return today - timedelta(days=3)
     return today - timedelta(days=1)
 
 
-def business_days_in_range(start: date, end: date) -> list[date]:
-    """Return all weekdays (Mon–Fri) between start and end inclusive."""
-    days = []
-    current = start
-    while current <= end:
-        if current.weekday() < 5:
-            days.append(current)
-        current += timedelta(days=1)
-    return days
-
-
 def fetch_effect_filings(filing_date: date) -> list[dict]:
+    """Return all EFFECT filings from EDGAR for the given date."""
     date_str = filing_date.strftime("%Y-%m-%d")
     log.info("Fetching EFFECT filings for %s", date_str)
 
@@ -95,11 +76,12 @@ def fetch_effect_filings(filing_date: date) -> list[dict]:
     from_idx = 0
 
     while True:
+        # Retry up to 3 times on 5xx server errors
         for attempt in range(3):
             resp = requests.get(
                 EDGAR_SEARCH_URL,
                 params={
-                    "forms": "EFFECT",
+                    "type": "EFFECT",
                     "dateRange": "custom",
                     "startdt": date_str,
                     "enddt": date_str,
@@ -122,8 +104,15 @@ def fetch_effect_filings(filing_date: date) -> list[dict]:
         resp.raise_for_status()
         data = resp.json()
 
+        # Debug: log the response structure for the first request
+        if from_idx == 0:
+            log.debug("API response keys: %s", list(data.keys()))
+            if "hits" in data:
+                log.debug("hits keys: %s", list(data["hits"].keys()))
+
         hits = data.get("hits", {}).get("hits", [])
         if not hits:
+            log.debug("No hits found in response")
             break
 
         filings.extend(hits)
@@ -134,12 +123,18 @@ def fetch_effect_filings(filing_date: date) -> list[dict]:
         if from_idx >= total:
             break
 
-        time.sleep(0.15)
+        time.sleep(0.15)   # be polite to SEC servers
 
     return filings
 
 
 def get_company_info(cik: str) -> dict:
+    """
+    Fetch company submissions and return:
+      - first_filing_date: earliest filing date on record (YYYY-MM-DD string)
+      - effect_count: total number of EFFECT filings in recent history
+      - category: offering type based on registration form history
+    """
     url = EDGAR_SUBMISSIONS_URL.format(cik.zfill(10))
     try:
         resp = requests.get(url, headers=HEADERS, timeout=15)
@@ -149,9 +144,13 @@ def get_company_info(cik: str) -> dict:
         forms = recent.get("form", [])
         dates = recent.get("filingDate", [])
 
+        # Earliest filing date — dates are most-recent-first, so take the last one
         first_filing_date = dates[-1] if dates else ""
+
+        # Count how many EFFECT filings this company has had
         effect_count = forms.count("EFFECT")
 
+        # Determine category from first non-EFFECT registration form
         category = "Other"
         for form in forms:
             if form == "EFFECT":
@@ -180,16 +179,20 @@ def get_company_info(cik: str) -> dict:
 
 
 def parse_filings(raw_hits: list[dict]) -> list[dict]:
+    """Flatten raw EDGAR search hits into clean dicts."""
     parsed = []
     for hit in raw_hits:
         src = hit.get("_source", {})
 
+        # display_names format: "Company Name  (TICKER)  (CIK 0001234567)"
         display_names = src.get("display_names", [])
         company = display_names[0].split("(")[0].strip() if display_names else "N/A"
 
+        # ciks is a list of zero-padded CIK strings
         ciks = src.get("ciks", [])
         cik = ciks[0].lstrip("0") if ciks else ""
 
+        # accession number is in 'adsh' field
         accession = src.get("adsh", "")
         accession_path = accession.replace("-", "")
 
@@ -203,7 +206,7 @@ def parse_filings(raw_hits: list[dict]) -> list[dict]:
                 "sic": sic,
                 "accession": accession,
                 "file_date": src.get("file_date", ""),
-                "first_filing_date": "",
+                "first_filing_date": "",   # filled in during enrichment
                 "filing_url": (
                     f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_path}/"
                     if cik and accession_path
@@ -218,6 +221,19 @@ def parse_filings(raw_hits: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Email
 # ---------------------------------------------------------------------------
+
+CATEGORY_COLORS = {
+    "IPO": "#1a7f3c",
+    "IPO (Foreign)": "#2e8b57",
+    "REIT IPO": "#4169e1",
+    "SEO / Shelf": "#c07000",
+    "SEO / Shelf (Foreign)": "#c07000",
+    "Merger / SPAC": "#8b0000",
+    "Merger (Foreign)": "#8b0000",
+    "Other": "#555555",
+    "Unknown": "#999999",
+}
+
 
 TABLE_HEADER = (
     "<table style='width:100%;border-collapse:collapse;font-size:14px;'>"
@@ -364,7 +380,32 @@ def send_email(subject: str, html_body: str) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
+CATEGORY_ORDER = {
+    "IPO": 0,
+    "IPO (Foreign)": 1,
+    "REIT IPO": 2,
+    "SEO / Shelf": 3,
+    "SEO / Shelf (Foreign)": 4,
+    "Merger / SPAC": 5,
+    "Merger (Foreign)": 6,
+    "Other": 7,
+    "Unknown": 8,
+}
+
+
+def business_days_in_range(start: date, end: date) -> list[date]:
+    """Return all weekdays (Mon–Fri) between start and end inclusive."""
+    days = []
+    current = start
+    while current <= end:
+        if current.weekday() < 5:   # 0=Mon … 4=Fri
+            days.append(current)
+        current += timedelta(days=1)
+    return days
+
+
 def process_one_day(filing_date: date) -> None:
+    """Fetch, enrich, and email filings for a single date."""
     log.info("Processing %s", filing_date)
 
     raw_hits = fetch_effect_filings(filing_date)
@@ -404,6 +445,7 @@ def main() -> None:
     date_str  = os.environ.get("EDGAR_DATE",        "").strip()
 
     if start_str and end_str:
+        # ── Range mode: backfill a date range ──────────────────────────────
         start = datetime.strptime(start_str, "%Y-%m-%d").date()
         end   = datetime.strptime(end_str,   "%Y-%m-%d").date()
         if start > end:
@@ -414,11 +456,13 @@ def main() -> None:
         for i, day in enumerate(days):
             process_one_day(day)
             if i < len(days) - 1:
-                time.sleep(2)
+                time.sleep(2)   # brief pause between days
     elif date_str:
+        # ── Single-date override ───────────────────────────────────────────
         filing_date = datetime.strptime(date_str, "%Y-%m-%d").date()
         process_one_day(filing_date)
     else:
+        # ── Default: previous business day ────────────────────────────────
         process_one_day(get_previous_business_day())
 
 
