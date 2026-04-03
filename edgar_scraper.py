@@ -26,6 +26,7 @@ EDGAR_SEARCH_URL = "https://efts.sec.gov/LATEST/search-index"
 EDGAR_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{}.json"
 EDGAR_FILING_BASE = "https://www.sec.gov/edgar/browse/?CIK={}"
 
+# SEC requires a descriptive User-Agent
 HEADERS = {
     "User-Agent": os.environ.get(
         "EDGAR_USER_AGENT", "IPOTracker/1.0 research@example.com"
@@ -34,6 +35,7 @@ HEADERS = {
     "Accept": "application/json",
 }
 
+# Registration form types → offering category
 FORM_CATEGORIES = {
     "S-1": "IPO",
     "S-1/A": "IPO",
@@ -52,42 +54,21 @@ FORM_CATEGORIES = {
     "F-4/A": "Merger (Foreign)",
 }
 
-CATEGORY_ORDER = {
-    "IPO": 0,
-    "IPO (Foreign)": 1,
-    "REIT IPO": 2,
-    "SEO / Shelf": 3,
-    "SEO / Shelf (Foreign)": 4,
-    "Merger / SPAC": 5,
-    "Merger (Foreign)": 6,
-    "Other": 7,
-    "Unknown": 8,
-}
-
 
 # ---------------------------------------------------------------------------
 # Data fetching
 # ---------------------------------------------------------------------------
 
 def get_previous_business_day() -> date:
+    """Return yesterday, rolling back over weekends."""
     today = date.today()
-    if today.weekday() == 0:
+    if today.weekday() == 0:      # Monday → Friday
         return today - timedelta(days=3)
     return today - timedelta(days=1)
 
 
-def business_days_in_range(start: date, end: date) -> list[date]:
-    """Return all weekdays (Mon–Fri) between start and end inclusive."""
-    days = []
-    current = start
-    while current <= end:
-        if current.weekday() < 5:
-            days.append(current)
-        current += timedelta(days=1)
-    return days
-
-
 def fetch_effect_filings(filing_date: date) -> list[dict]:
+    """Return all EFFECT filings from EDGAR for the given date."""
     date_str = filing_date.strftime("%Y-%m-%d")
     log.info("Fetching EFFECT filings for %s", date_str)
 
@@ -180,6 +161,7 @@ def get_company_info(cik: str) -> dict:
 
 
 def parse_filings(raw_hits: list[dict]) -> list[dict]:
+    """Flatten raw EDGAR search hits into clean dicts."""
     parsed = []
     for hit in raw_hits:
         src = hit.get("_source", {})
@@ -364,13 +346,20 @@ def send_email(subject: str, html_body: str) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
-def process_one_day(filing_date: date) -> None:
-    log.info("Processing %s", filing_date)
+def main() -> None:
+    date_override = os.environ.get("EDGAR_DATE")
+    if date_override:
+        from datetime import datetime
+        filing_date = datetime.strptime(date_override, "%Y-%m-%d").date()
+    else:
+        filing_date = get_previous_business_day()
+
+    log.info("Target filing date: %s", filing_date)
 
     raw_hits = fetch_effect_filings(filing_date)
+
     if not raw_hits:
-        log.info("No EFFECT filings found for %s — skipping email.", filing_date)
-        return
+        log.info("No EFFECT filings found for %s.", filing_date)
 
     filings = parse_filings(raw_hits)
     log.info("Enriching %d filings...", len(filings))
@@ -387,39 +376,23 @@ def process_one_day(filing_date: date) -> None:
         log.info("  %s -> %s (first filing: %s, effect count: %d)",
                  f["company"], f["category"], f["first_filing_date"], f["effect_count"])
 
-    filings.sort(key=lambda f: (CATEGORY_ORDER.get(f["category"], 99), f["company"]))
+    category_order = {
+        "IPO": 0,
+        "IPO (Foreign)": 1,
+        "REIT IPO": 2,
+        "SEO / Shelf": 3,
+        "SEO / Shelf (Foreign)": 4,
+        "Merger / SPAC": 5,
+        "Merger (Foreign)": 6,
+        "Other": 7,
+        "Unknown": 8,
+    }
+    filings.sort(key=lambda f: (category_order.get(f["category"], 99), f["company"]))
 
     date_label = filing_date.strftime("%Y-%m-%d")
     subject = f"Filed Effective Forms on EDGAR — {date_label} ({len(filings)} filing{'s' if len(filings) != 1 else ''})"
     html = build_html_email(filings, filing_date)
     send_email(subject, html)
-    log.info("Email sent for %s.", filing_date)
-
-
-def main() -> None:
-    from datetime import datetime
-
-    start_str = os.environ.get("EDGAR_START_DATE", "").strip()
-    end_str   = os.environ.get("EDGAR_END_DATE",   "").strip()
-    date_str  = os.environ.get("EDGAR_DATE",        "").strip()
-
-    if start_str and end_str:
-        start = datetime.strptime(start_str, "%Y-%m-%d").date()
-        end   = datetime.strptime(end_str,   "%Y-%m-%d").date()
-        if start > end:
-            log.error("EDGAR_START_DATE must be before or equal to EDGAR_END_DATE.")
-            return
-        days = business_days_in_range(start, end)
-        log.info("Range mode: %d business day(s) from %s to %s", len(days), start, end)
-        for i, day in enumerate(days):
-            process_one_day(day)
-            if i < len(days) - 1:
-                time.sleep(2)
-    elif date_str:
-        filing_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-        process_one_day(filing_date)
-    else:
-        process_one_day(get_previous_business_day())
 
 
 if __name__ == "__main__":
