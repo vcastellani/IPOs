@@ -24,9 +24,8 @@ log = logging.getLogger(__name__)
 
 EDGAR_SEARCH_URL = "https://efts.sec.gov/LATEST/search-index"
 EDGAR_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{}.json"
-EDGAR_FILING_BASE = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={}&type=EFFECT&dateb=&owner=include&count=5"
+EDGAR_FILING_BASE = "https://www.sec.gov/edgar/browse/?CIK={}"
 
-# SEC requires a descriptive User-Agent
 HEADERS = {
     "User-Agent": os.environ.get(
         "EDGAR_USER_AGENT", "IPOTracker/1.0 research@example.com"
@@ -35,7 +34,6 @@ HEADERS = {
     "Accept": "application/json",
 }
 
-# Registration form types → offering category
 FORM_CATEGORIES = {
     "S-1": "IPO",
     "S-1/A": "IPO",
@@ -54,21 +52,42 @@ FORM_CATEGORIES = {
     "F-4/A": "Merger (Foreign)",
 }
 
+CATEGORY_ORDER = {
+    "IPO": 0,
+    "IPO (Foreign)": 1,
+    "REIT IPO": 2,
+    "SEO / Shelf": 3,
+    "SEO / Shelf (Foreign)": 4,
+    "Merger / SPAC": 5,
+    "Merger (Foreign)": 6,
+    "Other": 7,
+    "Unknown": 8,
+}
+
 
 # ---------------------------------------------------------------------------
 # Data fetching
 # ---------------------------------------------------------------------------
 
 def get_previous_business_day() -> date:
-    """Return yesterday, rolling back over weekends."""
     today = date.today()
-    if today.weekday() == 0:      # Monday → Friday
+    if today.weekday() == 0:
         return today - timedelta(days=3)
     return today - timedelta(days=1)
 
 
+def business_days_in_range(start: date, end: date) -> list[date]:
+    """Return all weekdays (Mon–Fri) between start and end inclusive."""
+    days = []
+    current = start
+    while current <= end:
+        if current.weekday() < 5:
+            days.append(current)
+        current += timedelta(days=1)
+    return days
+
+
 def fetch_effect_filings(filing_date: date) -> list[dict]:
-    """Return all EFFECT filings from EDGAR for the given date."""
     date_str = filing_date.strftime("%Y-%m-%d")
     log.info("Fetching EFFECT filings for %s", date_str)
 
@@ -161,7 +180,6 @@ def get_company_info(cik: str) -> dict:
 
 
 def parse_filings(raw_hits: list[dict]) -> list[dict]:
-    """Flatten raw EDGAR search hits into clean dicts."""
     parsed = []
     for hit in raw_hits:
         src = hit.get("_source", {})
@@ -191,7 +209,7 @@ def parse_filings(raw_hits: list[dict]) -> list[dict]:
                     if cik and accession_path
                     else "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=EFFECT"
                 ),
-                "edgar_url": EDGAR_FILING_BASE.format(cik) if cik else "",
+                "edgar_url": EDGAR_FILING_BASE.format(cik.zfill(10)) if cik else "",
             }
         )
     return parsed
@@ -286,7 +304,7 @@ def build_html_email(filings: list[dict], filing_date: date) -> str:
         body = (
             make_table(
                 spacs,
-                "Suspected SPACs &#9733; (SIC 6770)",
+                "Special Purpose Acquisition Company (SPAC) Filings",
                 "Blank check companies — likely SPAC IPOs or follow-on SPAC registrations.",
                 show_pcaob=True,
             )
@@ -305,12 +323,11 @@ def build_html_email(filings: list[dict], filing_date: date) -> str:
         "<body style='font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:#f9fafb;margin:0;padding:0;'>"
         "<div style='max-width:900px;margin:32px auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.1);'>"
         "<div style='background:#1a3a6e;padding:24px 32px;color:#fff;'>"
-        "<h1 style='margin:0;font-size:20px;font-weight:700;'>EDGAR EFFECT Filings</h1>"
+        "<h1 style='margin:0;font-size:20px;font-weight:700;'>Filed Effective Forms on EDGAR</h1>"
         "<p style='margin:6px 0 0;opacity:0.85;font-size:14px;'>" + date_str + "</p>"
         "</div>"
         "<div style='padding:24px 32px;'>"
-        "<p style='color:#555;margin:0 0 8px;'><strong>" + filing_count_label + "</strong> found on EDGAR. "
-        "&#9733; = SIC 6770 (SPAC / Blank Check Company)</p>"
+        "<p style='color:#555;margin:0 0 8px;'><strong>" + filing_count_label + "</strong> found on EDGAR.</p>"
         + body +
         "</div>"
         "<div style='padding:16px 32px;background:#f4f5f7;font-size:12px;color:#888;'>"
@@ -347,20 +364,13 @@ def send_email(subject: str, html_body: str) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
-def main() -> None:
-    date_override = os.environ.get("EDGAR_DATE")
-    if date_override:
-        from datetime import datetime
-        filing_date = datetime.strptime(date_override, "%Y-%m-%d").date()
-    else:
-        filing_date = get_previous_business_day()
-
-    log.info("Target filing date: %s", filing_date)
+def process_one_day(filing_date: date) -> None:
+    log.info("Processing %s", filing_date)
 
     raw_hits = fetch_effect_filings(filing_date)
-
     if not raw_hits:
-        log.info("No EFFECT filings found for %s.", filing_date)
+        log.info("No EFFECT filings found for %s — skipping email.", filing_date)
+        return
 
     filings = parse_filings(raw_hits)
     log.info("Enriching %d filings...", len(filings))
@@ -377,23 +387,39 @@ def main() -> None:
         log.info("  %s -> %s (first filing: %s, effect count: %d)",
                  f["company"], f["category"], f["first_filing_date"], f["effect_count"])
 
-    category_order = {
-        "IPO": 0,
-        "IPO (Foreign)": 1,
-        "REIT IPO": 2,
-        "SEO / Shelf": 3,
-        "SEO / Shelf (Foreign)": 4,
-        "Merger / SPAC": 5,
-        "Merger (Foreign)": 6,
-        "Other": 7,
-        "Unknown": 8,
-    }
-    filings.sort(key=lambda f: (category_order.get(f["category"], 99), f["company"]))
+    filings.sort(key=lambda f: (CATEGORY_ORDER.get(f["category"], 99), f["company"]))
 
     date_label = filing_date.strftime("%Y-%m-%d")
-    subject = f"EDGAR EFFECT Filings — {date_label} ({len(filings)} filing{'s' if len(filings) != 1 else ''})"
+    subject = f"Filed Effective Forms on EDGAR — {date_label} ({len(filings)} filing{'s' if len(filings) != 1 else ''})"
     html = build_html_email(filings, filing_date)
     send_email(subject, html)
+    log.info("Email sent for %s.", filing_date)
+
+
+def main() -> None:
+    from datetime import datetime
+
+    start_str = os.environ.get("EDGAR_START_DATE", "").strip()
+    end_str   = os.environ.get("EDGAR_END_DATE",   "").strip()
+    date_str  = os.environ.get("EDGAR_DATE",        "").strip()
+
+    if start_str and end_str:
+        start = datetime.strptime(start_str, "%Y-%m-%d").date()
+        end   = datetime.strptime(end_str,   "%Y-%m-%d").date()
+        if start > end:
+            log.error("EDGAR_START_DATE must be before or equal to EDGAR_END_DATE.")
+            return
+        days = business_days_in_range(start, end)
+        log.info("Range mode: %d business day(s) from %s to %s", len(days), start, end)
+        for i, day in enumerate(days):
+            process_one_day(day)
+            if i < len(days) - 1:
+                time.sleep(2)
+    elif date_str:
+        filing_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        process_one_day(filing_date)
+    else:
+        process_one_day(get_previous_business_day())
 
 
 if __name__ == "__main__":
