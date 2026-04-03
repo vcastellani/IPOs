@@ -122,6 +122,7 @@ def fmt_warrants(val):
         return str(val)
 
 def oa_status(option, exercised):
+    """Compute overallotment status from total option and exercised amount."""
     if not option:
         return None
     if exercised is None:
@@ -173,7 +174,7 @@ with st.sidebar:
 
 # ── Main table ────────────────────────────────────────────────────────────────
 
-st.header("SPAC Tracker")
+st.header("SPAC IPOs")
 
 df = load_ipos()
 
@@ -183,30 +184,34 @@ if not df.empty:
     if search:
         df = df[df["company_name"].str.contains(search, case=False, na=False)]
 
-    if "offer_price" in df.columns and "securities_offered" in df.columns:
-        df["computed_total"] = (
-            df["offer_price"].fillna(0) * df["securities_offered"].fillna(0) / 1_000_000
-        ).round(1)
+    def _get_424b4_url(filings_val):
+        if not filings_val:
+            return None
+        for f in filings_val:
+            if isinstance(f, dict) and f.get("type") == "424B4":
+                return f.get("url")
+        return None
 
-    display_cols = [c for c in [
-        "company_name", "ticker", "exchange", "effective_date", "ipo_date",
-        "offer_price", "securities_type", "securities_offered", "computed_total",
-    ] if c in df.columns]
+    df["prospectus_url"] = df["filings"].apply(_get_424b4_url)
+    _oa = df["overallotment_exercised"].fillna(0) if "overallotment_exercised" in df.columns else 0
+    df["size_m"] = (
+        (df["securities_offered"].fillna(0) + _oa)
+        * df["offer_price"].fillna(0)
+        / 1_000_000
+    ).round(1)
+
+    display_cols = [c for c in ["company_name", "prospectus_url", "cik", "ticker", "size_m"] if c in df.columns]
 
     st.dataframe(
         df[display_cols],
         use_container_width=True,
         hide_index=True,
         column_config={
-            "company_name":       st.column_config.TextColumn("Company"),
-            "ticker":             st.column_config.TextColumn("Common Stock Ticker"),
-            "exchange":           st.column_config.TextColumn("Exchange"),
-            "effective_date":     st.column_config.DateColumn("Effective Date"),
-            "ipo_date":           st.column_config.DateColumn("IPO Date"),
-            "offer_price":        st.column_config.NumberColumn("Price", format="$ %.2f"),
-            "securities_type":    st.column_config.TextColumn("Securities Type"),
-            "securities_offered": st.column_config.NumberColumn("Securities Offered", format="%.0f"),
-            "computed_total":     st.column_config.NumberColumn("Total ($M)", format="$ %.1f"),
+            "company_name":   st.column_config.TextColumn("Company"),
+            "prospectus_url": st.column_config.LinkColumn("Prospectus", display_text="📄"),
+            "cik":            st.column_config.TextColumn("CIK"),
+            "ticker":         st.column_config.TextColumn("Ticker"),
+            "size_m":         st.column_config.NumberColumn("Size ($M)", format="$ %.1f"),
         },
     )
     st.caption(f"{len(df)} filing(s) shown")
@@ -331,6 +336,7 @@ if st.session_state.is_admin:
 
     # ── Add ───────────────────────────────────────────────────────────────────
     with tab_add:
+        # Outside-form selectors for instant reactivity
         sel_col1, sel_col2 = st.columns(2)
         with sel_col1:
             st.markdown("##### Securities Type")
@@ -532,7 +538,7 @@ if st.session_state.is_admin:
                     with ec2:
                         st.markdown("**Dates & Pricing**")
                         e_effective = st.date_input("Effective Date", value=pd.to_datetime(r["effective_date"]).date() if pd.notna(r.get("effective_date")) else None)
-                        e_ipo       = st.date_input("IPO Date",       value=pd.to_datetime(r["ipo_date"]).date() if pd.notna(r.get("ipo_date")) else None)
+                        e_ipo       = st.date_input("IPO Date",       value=pd.to_datetime(r["ipo_date"]).date()       if pd.notna(r.get("ipo_date"))       else None)
                         e_offer     = st.number_input("Price ($)", value=float(r["offer_price"]) if pd.notna(r.get("offer_price")) else 0.0, step=0.01)
 
                         st.markdown("**Underwriters**")
@@ -763,8 +769,9 @@ st.divider()
 st.subheader("SPAC Audit Partners")
 st.caption("Audit engagement partners linked to SPACs in this database, sourced from PCAOB Form AP filings.")
 
+# Build display: join ipos audit_partner_id → pcaob_partners
 _ipos_all = load_ipos()
-_ipos_with_pid = _ipos_all[_ipos_all["audit_partner_id"].notna()][["company_name", "audit_partner_id"]].copy()
+_ipos_with_pid = _ipos_all[_ipos_all["audit_partner_id"].notna()][["company_name", "audit_partner_id", "ipo_date"]].copy()
 
 if _ipos_with_pid.empty:
     st.info("No SPACs in the database have an Audit Partner ID assigned yet.")
@@ -772,15 +779,23 @@ else:
     _partner_summary = (
         _ipos_with_pid
         .groupby("audit_partner_id")
-        .agg(spac_count=("company_name", "count"),
-             companies=("company_name", lambda x: ", ".join(sorted(x))))
+        .agg(
+            spac_count=("company_name", "count"),
+            companies=("company_name", lambda x: ", ".join(sorted(x))),
+            years=("ipo_date", lambda x: ", ".join(
+                sorted(set(str(pd.to_datetime(v).year) for v in x if pd.notna(v)))
+            )),
+        )
         .reset_index()
     )
 
     _pcaob = load_spac_audit_partners()
     if not _pcaob.empty:
+        _pcaob_cols = ["engagement_partner_id", "first_name", "middle_name", "last_name", "suffix"]
+        if "firm_name" in _pcaob.columns:
+            _pcaob_cols.append("firm_name")
         _merged = _partner_summary.merge(
-            _pcaob[["engagement_partner_id", "first_name", "middle_name", "last_name", "suffix"]],
+            _pcaob[_pcaob_cols],
             left_on="audit_partner_id",
             right_on="engagement_partner_id",
             how="left",
@@ -792,7 +807,11 @@ else:
             return name if name else f"ID: {r['audit_partner_id']}"
 
         _merged["partner_name"] = _merged.apply(_full_name, axis=1)
-        _display = _merged[["partner_name", "audit_partner_id", "spac_count", "companies"]].sort_values("spac_count", ascending=False)
+        _disp_cols = ["partner_name", "audit_partner_id"]
+        if "firm_name" in _merged.columns:
+            _disp_cols.append("firm_name")
+        _disp_cols += ["years", "spac_count", "companies"]
+        _display = _merged[_disp_cols].sort_values("spac_count", ascending=False)
         st.dataframe(
             _display,
             use_container_width=True,
@@ -800,11 +819,14 @@ else:
             column_config={
                 "partner_name":     st.column_config.TextColumn("Partner Name"),
                 "audit_partner_id": st.column_config.TextColumn("Partner ID"),
+                "firm_name":        st.column_config.TextColumn("Firm"),
+                "years":            st.column_config.TextColumn("Year(s)"),
                 "spac_count":       st.column_config.NumberColumn("# SPACs", format="%.0f"),
                 "companies":        st.column_config.TextColumn("Companies"),
             },
         )
     else:
+        # PCAOB table not populated yet — show IDs and counts only
         _partner_summary_display = _partner_summary.sort_values("spac_count", ascending=False)
         st.dataframe(
             _partner_summary_display,
@@ -812,6 +834,7 @@ else:
             hide_index=True,
             column_config={
                 "audit_partner_id": st.column_config.TextColumn("Partner ID"),
+                "years":            st.column_config.TextColumn("Year(s)"),
                 "spac_count":       st.column_config.NumberColumn("# SPACs", format="%.0f"),
                 "companies":        st.column_config.TextColumn("Companies"),
             },
@@ -838,6 +861,7 @@ if st.session_state.is_admin:
                     if not csv_files:
                         st.error("No CSV file found inside the ZIP.")
                         st.stop()
+                    # Use the largest CSV (the main data file)
                     csv_name = max(csv_files, key=lambda n: zf.getinfo(n).file_size)
                     with zf.open(csv_name) as f:
                         try:
@@ -855,19 +879,26 @@ if st.session_state.is_admin:
             "Engagement Partner Middle Name",
             "Engagement Partner Suffix",
         ]
+        OPTIONAL_FIRM = "Firm Name"
+        has_firm = OPTIONAL_FIRM in df_raw.columns
         missing = [c for c in REQUIRED if c not in df_raw.columns]
         if missing:
             st.error(f"Expected columns not found in CSV: {missing}")
             st.stop()
 
         with st.spinner("Deduplicating and upserting…"):
+            cols = REQUIRED + ([OPTIONAL_FIRM] if has_firm else [])
             df_partners = (
-                df_raw[REQUIRED]
+                df_raw[cols]
                 .dropna(subset=["Engagement Partner ID"])
                 .drop_duplicates(subset=["Engagement Partner ID"])
                 .copy()
             )
-            df_partners.columns = ["engagement_partner_id", "last_name", "first_name", "middle_name", "suffix"]
+            col_names = ["engagement_partner_id", "last_name", "first_name", "middle_name", "suffix"]
+            if has_firm:
+                col_names.append("firm_name")
+            df_partners.columns = col_names
+            # Replace NaN with None for JSON serialisation
             df_partners = df_partners.astype(object).where(pd.notna(df_partners), None)
             now_str = datetime.utcnow().isoformat()
             df_partners["updated_at"] = now_str
