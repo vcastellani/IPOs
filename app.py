@@ -375,7 +375,6 @@ if st.session_state.is_admin:
                 st.markdown("**Dates & Pricing**")
                 a_effective = st.date_input("Effective Date", value=None)
                 a_ipo       = st.date_input("IPO Date", value=None)
-                a_offer     = st.number_input("Price ($)", min_value=0.0, step=0.01, value=None)
 
                 st.markdown("**Underwriters**")
                 if a_uw_mode == "Solo":
@@ -458,7 +457,7 @@ if st.session_state.is_admin:
                         "audit_partner_id":       a_audit_partner_id or None,
                         "effective_date":         a_effective.isoformat() if a_effective else None,
                         "ipo_date":               a_ipo.isoformat() if a_ipo else None,
-                        "offer_price":            a_offer,
+                        "offer_price":            10.00,
                         "securities_type":        a_sec_type,
                         "securities_offered":     int(a_securities) if a_securities else None,
                         "warrant_count":          float(a_warrant_count) if a_warrant_count else None,
