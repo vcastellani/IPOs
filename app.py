@@ -155,7 +155,7 @@ with st.sidebar:
         with st.expander("Admin Login"):
             pwd = st.text_input("Password", type="password", key="pwd_input")
             if st.button("Login"):
-                if pwd == st.secrets.get("admin_password", "123456"):
+                if pwd == st.secrets.get("admin_password", ""):
                     st.session_state.is_admin = True
                     st.rerun()
                 else:
