@@ -144,27 +144,6 @@ def fmt_underwriters(lst):
 if "is_admin" not in st.session_state:
     st.session_state.is_admin = False
 
-if "is_authenticated" not in st.session_state:
-    st.session_state.is_authenticated = False
-
-# ── App-level password gate ───────────────────────────────────────────────────
-
-if not st.session_state.is_authenticated:
-    st.markdown(
-        "<h2 style='text-align:center; margin-top:10vh;'>SPAC Tracker</h2>",
-        unsafe_allow_html=True,
-    )
-    col_l, col_c, col_r = st.columns([2, 1, 2])
-    with col_c:
-        app_pwd = st.text_input("Password", type="password", key="app_pwd_input")
-        if st.button("Enter", use_container_width=True):
-            if app_pwd == st.secrets.get("app_password", ""):
-                st.session_state.is_authenticated = True
-                st.rerun()
-            else:
-                st.error("Incorrect password")
-    st.stop()
-
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
