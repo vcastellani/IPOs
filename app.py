@@ -115,6 +115,57 @@ def load_known_underwriters() -> list[str]:
             all_uws.extend(val)
     return sorted(set(u for u in all_uws if u and u.strip()))
 
+@st.cache_resource
+def anthropic_client():
+    return anthropic.Anthropic(api_key=st.secrets.get("anthropic_api_key", ""))
+
+def extract_from_424b4(url: str) -> dict:
+    resp = requests.get(
+        url,
+        headers={"User-Agent": "SPACTracker/1.0 research@example.com"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+
+    text = re.sub(r"<[^>]+>", " ", resp.text)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    # Cover page + end of doc (where Experts/auditor section lives)
+    excerpt = text[:15000] + "\n\n[...]\n\n" + text[-3000:]
+
+    msg = anthropic_client().messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=512,
+        system=[{
+            "type": "text",
+            "text": "You are a financial document parser for SEC filings. Return only valid JSON, no markdown.",
+            "cache_control": {"type": "ephemeral"},
+        }],
+        messages=[{"role": "user", "content": f"""Extract these fields from the SPAC 424B4 prospectus. Return ONLY a raw JSON object:
+
+{{
+  "company_name": "full legal company name",
+  "securities_offered": 12500000,
+  "securities_type": "Units - Shares and Warrants",
+  "auditor": "Audit firm name",
+  "underwriters": ["Lead Underwriter", "Co-Underwriter"],
+  "warrant_count": 0.5,
+  "warrant_strike_price": 11.50
+}}
+
+Rules:
+- securities_type must be exactly one of: "Shares", "Units - Shares and Warrants", "Units - Shares and Rights", "Units - Shares, Warrants, and Rights"
+- securities_offered is the integer share/unit count (not a dollar amount)
+- warrant_count is warrants per unit (e.g. 0.5), null if not applicable
+- warrant_strike_price is the exercise price in dollars, null if not applicable
+- underwriters: lead underwriter first, null values for unknown
+
+Filing text:
+{excerpt}"""}],
+    )
+
+    return json.loads(msg.content[0].text)
+
 def refresh():
     st.cache_data.clear()
 
