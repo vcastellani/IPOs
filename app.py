@@ -426,6 +426,38 @@ if st.session_state.is_admin:
             st.markdown("##### Underwriters")
             a_uw_mode = st.radio("Underwriter count", ["Solo", "Multiple"], horizontal=True, key="add_uw_mode")
 
+        # ── Pre-fill from 424B4 ───────────────────────────────────────────
+        st.markdown("**Pre-fill from 424B4 Prospectus**")
+        pf_col1, pf_col2 = st.columns([5, 1])
+        with pf_col1:
+            pf_url = st.text_input(
+                "424B4 URL", key="pf_424b4_url",
+                label_visibility="collapsed",
+                placeholder="Paste 424B4 URL to auto-fill form fields...",
+            )
+        with pf_col2:
+            if st.button("Extract", key="pf_extract", use_container_width=True):
+                if pf_url:
+                    with st.spinner("Reading prospectus..."):
+                        try:
+                            data = extract_from_424b4(pf_url)
+                            st.session_state.prefill_424b4 = data
+                            if data.get("securities_type") in SECURITY_TYPES:
+                                st.session_state["add_sec_type"] = data["securities_type"]
+                            uws = data.get("underwriters") or []
+                            if len(uws) > 1:
+                                st.session_state["add_uw_mode"] = "Multiple"
+                            st.success("Extracted — review fields below and submit.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Extraction failed: {e}")
+                else:
+                    st.warning("Enter a URL first.")
+
+        pf = st.session_state.get("prefill_424b4", {})
+        pf_uws = pf.get("underwriters") or []
+        st.divider()
+
         with st.form("add_form", clear_on_submit=True):
             st.markdown("**Initial Filings**")
             fi1, fi2, fi3 = st.columns(3)
