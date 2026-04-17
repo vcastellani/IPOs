@@ -92,6 +92,24 @@ def load_spac_audit_partners() -> pd.DataFrame:
     if not resp.data:
         return pd.DataFrame()
     return pd.DataFrame(resp.data)
+    
+@st.cache_data(ttl=300)
+def load_known_auditors() -> list[str]:
+    df = load_ipos()
+    if df.empty or "auditor" not in df.columns:
+        return []
+    return sorted(df["auditor"].dropna().unique().tolist())
+
+@st.cache_data(ttl=300)
+def load_known_underwriters() -> list[str]:
+    df = load_ipos()
+    if df.empty or "underwriters_list" not in df.columns:
+        return []
+    all_uws = []
+    for val in df["underwriters_list"].dropna():
+        if isinstance(val, list):
+            all_uws.extend(val)
+    return sorted(set(u for u in all_uws if u and u.strip()))
 
 def refresh():
     st.cache_data.clear()
@@ -138,6 +156,12 @@ def fmt_underwriters(lst):
     if not lst:
         return None
     return ", ".join(lst)
+
+def resolve_pick(pick, new, other_label="Other / New..."):
+    """Return the typed-in value if 'Other' was picked, otherwise the dropdown value."""
+    if pick == other_label:
+        return new.strip() or None
+    return pick or None
 
 # ── Session state ─────────────────────────────────────────────────────────────
 
@@ -366,7 +390,10 @@ if st.session_state.is_admin:
                 a_edgar_url     = st.text_input("EDGAR Homepage URL")
                 a_ticker        = st.text_input("Common Stock Ticker")
                 a_exchange      = st.selectbox("Exchange", EXCHANGES)
-                a_auditor           = st.text_input("Auditor")
+                _known_aud    = load_known_auditors()
+                _aud_opts     = [""] + _known_aud + ["Other / New..."]
+                a_auditor_sel = st.selectbox("Auditor", _aud_opts)
+                a_auditor_new = st.text_input("New auditor name", placeholder="Type if not listed above")
                 a_auditor_since     = st.text_input("Auditor Since")
                 a_audit_partner_id  = st.text_input("Audit Partner ID")
                 a_image             = st.text_input("Image URL")
@@ -377,20 +404,36 @@ if st.session_state.is_admin:
                 a_ipo       = st.date_input("IPO Date", value=None)
 
                 st.markdown("**Underwriters**")
+                _known_uws = load_known_underwriters()
+                _uw_opts   = [""] + _known_uws + ["Other / New..."]
                 if a_uw_mode == "Solo":
-                    a_uw_1      = st.text_input("Underwriter")
+                    a_uw_1_sel  = st.selectbox("Underwriter", _uw_opts)
+                    a_uw_1_new  = st.text_input("New underwriter name", placeholder="Type if not listed above")
                     a_uw_others = []
                 else:
                     uwc1, uwc2 = st.columns(2)
                     with uwc1:
-                        a_uw_1 = st.text_input("Underwriter 1 (Lead)")
-                        a_uw_3 = st.text_input("Underwriter 3")
-                        a_uw_5 = st.text_input("Underwriter 5")
+                        a_uw_1_sel = st.selectbox("Underwriter 1 (Lead)", _uw_opts)
+                        a_uw_1_new = st.text_input("New name 1", placeholder="Type if not listed")
+                        a_uw_3_sel = st.selectbox("Underwriter 3", _uw_opts)
+                        a_uw_3_new = st.text_input("New name 3", placeholder="Type if not listed")
+                        a_uw_5_sel = st.selectbox("Underwriter 5", _uw_opts)
+                        a_uw_5_new = st.text_input("New name 5", placeholder="Type if not listed")
                     with uwc2:
-                        a_uw_2 = st.text_input("Underwriter 2")
-                        a_uw_4 = st.text_input("Underwriter 4")
-                        a_uw_6 = st.text_input("Underwriter 6")
-                    a_uw_others = [a_uw_2, a_uw_3, a_uw_4, a_uw_5, a_uw_6]
+                        a_uw_2_sel = st.selectbox("Underwriter 2", _uw_opts)
+                        a_uw_2_new = st.text_input("New name 2", placeholder="Type if not listed")
+                        a_uw_4_sel = st.selectbox("Underwriter 4", _uw_opts)
+                        a_uw_4_new = st.text_input("New name 4", placeholder="Type if not listed")
+                        a_uw_6_sel = st.selectbox("Underwriter 6", _uw_opts)
+                        a_uw_6_new = st.text_input("New name 6", placeholder="Type if not listed")
+                    a_uw_others = [
+                        resolve_pick(a_uw_2_sel, a_uw_2_new),
+                        resolve_pick(a_uw_3_sel, a_uw_3_new),
+                        resolve_pick(a_uw_4_sel, a_uw_4_new),
+                        resolve_pick(a_uw_5_sel, a_uw_5_new),
+                        resolve_pick(a_uw_6_sel, a_uw_6_new),
+                    ]
+
 
             with c3:
                 st.markdown("**Securities**")
@@ -436,6 +479,7 @@ if st.session_state.is_admin:
                 if not a_name:
                     st.error("Company Name is required.")
                 else:
+                    a_uw_1  = resolve_pick(a_uw_1_sel, a_uw_1_new)
                     uw_list = [u for u in [a_uw_1] + a_uw_others if u and u.strip()]
 
                     initial_filings = []
@@ -452,7 +496,7 @@ if st.session_state.is_admin:
                         "edgar_url":              a_edgar_url or None,
                         "ticker":                 a_ticker or None,
                         "exchange":               a_exchange or None,
-                        "auditor":                a_auditor or None,
+                        "auditor":                resolve_pick(a_auditor_sel, a_auditor_new) or None,
                         "auditor_since":          a_auditor_since or None,
                         "audit_partner_id":       a_audit_partner_id or None,
                         "effective_date":         a_effective.isoformat() if a_effective else None,
@@ -529,7 +573,12 @@ if st.session_state.is_admin:
                         e_edgar_url     = st.text_input("EDGAR Homepage URL", value=r.get("edgar_url") or "")
                         e_ticker        = st.text_input("Common Stock Ticker", value=r.get("ticker") or "")
                         e_exchange      = st.selectbox("Exchange", EXCHANGES, index=_idx(EXCHANGES, r.get("exchange") or ""))
-                        e_auditor          = st.text_input("Auditor", value=r.get("auditor") or "")
+                        _known_aud_e   = load_known_auditors()
+                        _existing_aud  = r.get("auditor") or ""
+                        _aud_opts_e    = [""] + _known_aud_e + ["Other / New..."]
+                        _aud_idx       = _aud_opts_e.index(_existing_aud) if _existing_aud in _known_aud_e else (len(_aud_opts_e) - 1 if _existing_aud else 0)
+                        e_auditor_sel  = st.selectbox("Auditor", _aud_opts_e, index=_aud_idx)
+                        e_auditor_new  = st.text_input("New auditor name", value=_existing_aud if _existing_aud not in _known_aud_e else "", placeholder="Type if not listed above")
                         e_auditor_since    = st.text_input("Auditor Since", value=r.get("auditor_since") or "")
                         e_audit_partner_id = st.text_input("Audit Partner ID", value=r.get("audit_partner_id") or "")
                         e_image            = st.text_input("Image URL", value=r.get("image_url") or "")
@@ -541,21 +590,52 @@ if st.session_state.is_admin:
                         e_offer     = st.number_input("Price ($)", value=float(r["offer_price"]) if pd.notna(r.get("offer_price")) else 0.0, step=0.01)
 
                         st.markdown("**Underwriters**")
+                        _known_uws_e = load_known_underwriters()
+                        _uw_opts_e   = [""] + _known_uws_e + ["Other / New..."]
+                        
+                        def _uw_sel_idx(val):
+                            if val in _known_uws_e:
+                                return _uw_opts_e.index(val)
+                            return len(_uw_opts_e) - 1 if val else 0
+                        
+                        def _uw_new_val(val):
+                            return val if val and val not in _known_uws_e else ""
+                        
                         uw0 = existing_uws[0] if len(existing_uws) > 0 else ""
                         if e_uw_mode == "Solo":
-                            e_uw_1      = st.text_input("Underwriter", value=uw0)
+                            e_uw_1_sel  = st.selectbox("Underwriter", _uw_opts_e, index=_uw_sel_idx(uw0))
+                            e_uw_1_new  = st.text_input("New underwriter name", value=_uw_new_val(uw0), placeholder="Type if not listed above")
                             e_uw_others = []
                         else:
                             uwc1, uwc2 = st.columns(2)
                             with uwc1:
-                                e_uw_1 = st.text_input("Underwriter 1 (Lead)", value=uw0)
-                                e_uw_3 = st.text_input("Underwriter 3", value=existing_uws[2] if len(existing_uws) > 2 else "")
-                                e_uw_5 = st.text_input("Underwriter 5", value=existing_uws[4] if len(existing_uws) > 4 else "")
+                                v1 = uw0
+                                v3 = existing_uws[2] if len(existing_uws) > 2 else ""
+                                v5 = existing_uws[4] if len(existing_uws) > 4 else ""
+                                e_uw_1_sel = st.selectbox("Underwriter 1 (Lead)", _uw_opts_e, index=_uw_sel_idx(v1))
+                                e_uw_1_new = st.text_input("New name 1", value=_uw_new_val(v1), placeholder="Type if not listed")
+                                e_uw_3_sel = st.selectbox("Underwriter 3", _uw_opts_e, index=_uw_sel_idx(v3))
+                                e_uw_3_new = st.text_input("New name 3", value=_uw_new_val(v3), placeholder="Type if not listed")
+                                e_uw_5_sel = st.selectbox("Underwriter 5", _uw_opts_e, index=_uw_sel_idx(v5))
+                                e_uw_5_new = st.text_input("New name 5", value=_uw_new_val(v5), placeholder="Type if not listed")
                             with uwc2:
-                                e_uw_2 = st.text_input("Underwriter 2", value=existing_uws[1] if len(existing_uws) > 1 else "")
-                                e_uw_4 = st.text_input("Underwriter 4", value=existing_uws[3] if len(existing_uws) > 3 else "")
-                                e_uw_6 = st.text_input("Underwriter 6", value=existing_uws[5] if len(existing_uws) > 5 else "")
-                            e_uw_others = [e_uw_2, e_uw_3, e_uw_4, e_uw_5, e_uw_6]
+                                v2 = existing_uws[1] if len(existing_uws) > 1 else ""
+                                v4 = existing_uws[3] if len(existing_uws) > 3 else ""
+                                v6 = existing_uws[5] if len(existing_uws) > 5 else ""
+                                e_uw_2_sel = st.selectbox("Underwriter 2", _uw_opts_e, index=_uw_sel_idx(v2))
+                                e_uw_2_new = st.text_input("New name 2", value=_uw_new_val(v2), placeholder="Type if not listed")
+                                e_uw_4_sel = st.selectbox("Underwriter 4", _uw_opts_e, index=_uw_sel_idx(v4))
+                                e_uw_4_new = st.text_input("New name 4", value=_uw_new_val(v4), placeholder="Type if not listed")
+                                e_uw_6_sel = st.selectbox("Underwriter 6", _uw_opts_e, index=_uw_sel_idx(v6))
+                                e_uw_6_new = st.text_input("New name 6", value=_uw_new_val(v6), placeholder="Type if not listed")
+                            e_uw_others = [
+                                resolve_pick(e_uw_2_sel, e_uw_2_new),
+                                resolve_pick(e_uw_3_sel, e_uw_3_new),
+                                resolve_pick(e_uw_4_sel, e_uw_4_new),
+                                resolve_pick(e_uw_5_sel, e_uw_5_new),
+                                resolve_pick(e_uw_6_sel, e_uw_6_new),
+                            ]
+
 
                     with ec3:
                         st.markdown("**Securities**")
@@ -598,14 +678,16 @@ if st.session_state.is_admin:
                     e_notes = st.text_area("Notes", value=r.get("notes") or "")
 
                     if st.form_submit_button("Save Changes", type="primary"):
+                        e_uw_1    = resolve_pick(e_uw_1_sel, e_uw_1_new)
                         e_uw_list = [u for u in [e_uw_1] + e_uw_others if u and u.strip()]
+
                         update = {
                             "company_name":           e_name,
                             "cik":                    e_cik or None,
                             "edgar_url":              e_edgar_url or None,
                             "ticker":                 e_ticker or None,
                             "exchange":               e_exchange or None,
-                            "auditor":                e_auditor or None,
+                            "auditor":                resolve_pick(e_auditor_sel, e_auditor_new) or None,
                             "auditor_since":          e_auditor_since or None,
                             "audit_partner_id":       e_audit_partner_id or None,
                             "effective_date":         e_effective.isoformat() if e_effective else None,
