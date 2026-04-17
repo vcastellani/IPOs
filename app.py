@@ -472,7 +472,7 @@ if st.session_state.is_admin:
 
             with c1:
                 st.markdown("**Company**")
-                a_name          = st.text_input("Company Name *")
+                a_name = st.text_input("Company Name *", value=pf.get("company_name", ""))
                 a_cik           = st.text_input("CIK")
                 a_edgar_url     = st.text_input("EDGAR Homepage URL")
                 a_ticker        = st.text_input("Common Stock Ticker")
@@ -524,11 +524,14 @@ if st.session_state.is_admin:
 
             with c3:
                 st.markdown("**Securities**")
-                a_securities = st.number_input("Securities Offered", min_value=0, step=100_000, value=None)
+                a_securities = st.number_input("Securities Offered", min_value=0, step=100_000,
+                                value=int(pf["securities_offered"]) if pf.get("securities_offered") else None)
 
                 if a_has_warrants:
-                    a_warrant_count  = st.number_input("Number of Warrants", min_value=0.0, step=0.5, value=None)
-                    a_warrant_strike = st.number_input("Warrant Strike Price ($)", min_value=0.0, step=0.01, value=None)
+                    a_warrant_count = st.number_input("Number of Warrants", min_value=0.0, step=0.5,
+                                   value=float(pf["warrant_count"]) if pf.get("warrant_count") else None)
+                    a_warrant_strike = st.number_input("Warrant Strike Price ($)", min_value=0.0, step=0.01,
+                                    value=float(pf["warrant_strike_price"]) if pf.get("warrant_strike_price") else None)
                 else:
                     a_warrant_count  = None
                     a_warrant_strike = None
@@ -611,6 +614,7 @@ if st.session_state.is_admin:
                     service_client().table("ipos").insert(new_row).execute()
                     st.success(f"Added {a_name}!")
                     refresh()
+                    st.session_state.pop("prefill_424b4", None)
                     st.rerun()
 
     # ── Edit / Delete ─────────────────────────────────────────────────────────
