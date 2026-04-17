@@ -534,8 +534,8 @@ if st.session_state.is_admin:
         else:
             options = {
                 f"{r['company_name']}  (ID {r['id']})": r["id"]
-                for _, r in full_df.iterrows()
-            }
+                for _, r in full_df.sort_values("company_name").iterrows()
+        }
             sel_label = st.selectbox("Select entry", list(options.keys()), key="edit_select")
             sel_id    = options[sel_label]
             r         = full_df[full_df["id"] == sel_id].iloc[0]
