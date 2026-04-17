@@ -479,8 +479,8 @@ if st.session_state.is_admin:
                 a_exchange      = st.selectbox("Exchange", EXCHANGES)
                 _known_aud    = load_known_auditors()
                 _aud_opts     = [""] + _known_aud + ["Other / New..."]
-                a_auditor_sel = st.selectbox("Auditor", _aud_opts)
-                a_auditor_new = st.text_input("New auditor name", placeholder="Type if not listed above")
+                a_auditor_sel = st.selectbox("Auditor", _aud_opts, index=_aud_idx)
+                a_auditor_new = st.text_input("New auditor name", value=pf_auditor if pf_auditor not in _known_aud else "", placeholder="Type if not listed above")
                 a_auditor_since     = st.text_input("Auditor Since")
                 a_audit_partner_id  = st.text_input("Audit Partner ID")
                 a_image             = st.text_input("Image URL")
@@ -494,25 +494,34 @@ if st.session_state.is_admin:
                 _known_uws = load_known_underwriters()
                 _uw_opts   = [""] + _known_uws + ["Other / New..."]
                 if a_uw_mode == "Solo":
-                    a_uw_1_sel  = st.selectbox("Underwriter", _uw_opts)
-                    a_uw_1_new  = st.text_input("New underwriter name", placeholder="Type if not listed above")
+                    pf_uw0     = pf_uws[0] if len(pf_uws) > 0 else ""
+                    a_uw_1_sel = st.selectbox("Underwriter", _uw_opts, index=_pf_uw_idx(pf_uw0))
+                    a_uw_1_new = st.text_input("New underwriter name", value=_pf_uw_new(pf_uw0), placeholder="Type if not listed above")
                     a_uw_others = []
                 else:
                     uwc1, uwc2 = st.columns(2)
                     with uwc1:
-                        a_uw_1_sel = st.selectbox("Underwriter 1 (Lead)", _uw_opts)
-                        a_uw_1_new = st.text_input("New name 1", placeholder="Type if not listed")
-                        a_uw_3_sel = st.selectbox("Underwriter 3", _uw_opts)
-                        a_uw_3_new = st.text_input("New name 3", placeholder="Type if not listed")
-                        a_uw_5_sel = st.selectbox("Underwriter 5", _uw_opts)
-                        a_uw_5_new = st.text_input("New name 5", placeholder="Type if not listed")
+                        pf_uw0 = pf_uws[0] if len(pf_uws) > 0 else ""
+                        a_uw_1_sel = st.selectbox("Underwriter 1 (Lead)", _uw_opts, index=_pf_uw_idx(pf_uw0))
+                        a_uw_1_new = st.text_input("New name 1", value=_pf_uw_new(pf_uw0), placeholder="Type if not listed")
+                        pf_uw2 = pf_uws[2] if len(pf_uws) > 2 else ""
+                        a_uw_3_sel = st.selectbox("Underwriter 3", _uw_opts, index=_pf_uw_idx(pf_uw2))
+                        a_uw_3_new = st.text_input("New name 3", value=_pf_uw_new(pf_uw2), placeholder="Type if not listed")
+                        pf_uw4 = pf_uws[4] if len(pf_uws) > 4 else ""
+                        a_uw_5_sel = st.selectbox("Underwriter 5", _uw_opts, index=_pf_uw_idx(pf_uw4))
+                        a_uw_5_new = st.text_input("New name 5", value=_pf_uw_new(pf_uw4), placeholder="Type if not listed")
+
                     with uwc2:
-                        a_uw_2_sel = st.selectbox("Underwriter 2", _uw_opts)
-                        a_uw_2_new = st.text_input("New name 2", placeholder="Type if not listed")
-                        a_uw_4_sel = st.selectbox("Underwriter 4", _uw_opts)
-                        a_uw_4_new = st.text_input("New name 4", placeholder="Type if not listed")
-                        a_uw_6_sel = st.selectbox("Underwriter 6", _uw_opts)
-                        a_uw_6_new = st.text_input("New name 6", placeholder="Type if not listed")
+                        pf_uw1 = pf_uws[1] if len(pf_uws) > 1 else ""
+                        a_uw_2_sel = st.selectbox("Underwriter 2", _uw_opts, index=_pf_uw_idx(pf_uw1))
+                        a_uw_2_new = st.text_input("New name 2", value=_pf_uw_new(pf_uw1), placeholder="Type if not listed")
+                        pf_uw3 = pf_uws[3] if len(pf_uws) > 3 else ""
+                        a_uw_4_sel = st.selectbox("Underwriter 4", _uw_opts, index=_pf_uw_idx(pf_uw3))
+                        a_uw_4_new = st.text_input("New name 4", value=_pf_uw_new(pf_uw3), placeholder="Type if not listed")
+                        pf_uw5 = pf_uws[5] if len(pf_uws) > 5 else ""
+                        a_uw_6_sel = st.selectbox("Underwriter 6", _uw_opts, index=_pf_uw_idx(pf_uw5))
+                        a_uw_6_new = st.text_input("New name 6", value=_pf_uw_new(pf_uw5), placeholder="Type if not listed")
+
                     a_uw_others = [
                         resolve_pick(a_uw_2_sel, a_uw_2_new),
                         resolve_pick(a_uw_3_sel, a_uw_3_new),
