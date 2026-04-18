@@ -478,34 +478,40 @@ if st.session_state.is_admin:
             st.markdown("##### Underwriters")
             a_uw_mode = st.radio("Underwriter count", ["Solo", "Multiple"], horizontal=True, key="add_uw_mode")
 
-        # ── Pre-fill from 424B4 ───────────────────────────────────────────
-        st.markdown("**Pre-fill from 424B4 Prospectus**")
-        pf_col1, pf_col2 = st.columns([5, 1])
+        st.markdown("**Pre-fill from EDGAR (CIK + 424B4 Filing Date)**")
+        pf_col1, pf_col2, pf_col3 = st.columns([2, 2, 1])
         with pf_col1:
-            pf_url = st.text_input(
-                "424B4 URL", key="pf_424b4_url",
+            pf_cik = st.text_input(
+                "CIK", key="pf_424b4_cik",
                 label_visibility="collapsed",
-                placeholder="Paste 424B4 URL to auto-fill form fields...",
+                placeholder="CIK (e.g. 1926599)",
             )
         with pf_col2:
-            if st.button("Extract", key="pf_extract", use_container_width=True):
-                if pf_url:
-                    with st.spinner("Reading prospectus..."):
+            pf_date = st.date_input("424B4 Filing Date", value=None, key="pf_424b4_date", label_visibility="collapsed")
+        with pf_col3:
+            if st.button("Find & Extract", key="pf_extract", use_container_width=True):
+                if pf_cik and pf_date:
+                    with st.spinner("Looking up EDGAR..."):
                         try:
+                            pf_url = find_424b4_url(pf_cik, pf_date.isoformat())
+                            st.spinner("Reading prospectus...")
                             data = extract_from_424b4(pf_url)
                             data["prospectus_url"] = pf_url
+                            data["cik"] = pf_cik
+                            cik_int = int(pf_cik)
+                            data["edgar_url"] = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik_int:010d}&type=&dateb=&owner=include&count=40"
                             st.session_state.prefill_424b4 = data
                             if data.get("securities_type") in SECURITY_TYPES:
                                 st.session_state["prefill_sec_type_pending"] = data["securities_type"]
                             uws = data.get("underwriters") or []
                             if len(uws) > 1:
                                 st.session_state["prefill_uw_mode_pending"] = "Multiple"
-                            st.success("Extracted — review fields below and submit.")
+                            st.success(f"Found 424B4 — review fields below and submit.")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Extraction failed: {e}")
+                            st.error(f"Failed: {e}")
                 else:
-                    st.warning("Enter a URL first.")
+                    st.warning("Enter both CIK and filing date.")
 
         pf = st.session_state.get("prefill_424b4", {})
         pf_uws = pf.get("underwriters") or []
