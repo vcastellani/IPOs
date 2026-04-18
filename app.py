@@ -555,8 +555,10 @@ if st.session_state.is_admin:
                 a_exchange      = st.selectbox("Exchange", EXCHANGES)
                 _known_aud    = load_known_auditors()
                 _aud_opts     = [""] + _known_aud + ["Other / New..."]
-                pf_auditor    = pf.get("auditor", "")
-                _aud_idx      = _aud_opts.index(pf_auditor) if pf_auditor in _known_aud else (len(_aud_opts) - 1 if pf_auditor else 0)
+                pf_auditor_raw = pf.get("auditor", "")
+                _aud_fuzzy     = difflib.get_close_matches(pf_auditor_raw, _known_aud, n=1, cutoff=0.8)
+                pf_auditor     = _aud_fuzzy[0] if _aud_fuzzy else pf_auditor_raw
+                _aud_idx       = _aud_opts.index(pf_auditor) if pf_auditor in _known_aud else (len(_aud_opts) - 1 if pf_auditor else 0)
                 a_auditor_sel = st.selectbox("Auditor", _aud_opts, index=_aud_idx)
                 a_auditor_new = st.text_input("New auditor name", value=pf_auditor if pf_auditor not in _known_aud else "", placeholder="Type if not listed above")
                 a_auditor_since     = st.text_input("Auditor Since", value=str(pf.get("auditor_since", "")) if pf.get("auditor_since") else "")
