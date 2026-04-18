@@ -179,9 +179,9 @@ Rules:
 - securities_type must be exactly one of: "Shares", "Units - Shares and Warrants", "Units - Shares and Rights", "Units - Shares, Warrants, and Rights"
 - securities_offered is the integer share/unit count (not a dollar amount)
 - warrant_count is warrants per unit (e.g. 0.5), null if not applicable
-- rights_count is rights per unit (e.g. 0.1), null if not applicable
+- rights_count is rights per unit as a decimal: if a unit contains 1 right use 1.0, if 1/2 right use 0.5, if 1/5 of a right (or "one right per 5 units") use 0.2; null if not applicable
 - warrant_strike_price is the exercise price in dollars, null if not applicable
-- auditor: find the "/s/ Firm Name" signature line near the end of the "REPORT OF INDEPENDENT REGISTERED PUBLIC ACCOUNTING FIRM" section — the firm name appears on the line after "/s/" as well; use that name (e.g. "Marcum llp", "WithumSmith+Brown, PC")
+- auditor: find the "/s/ Firm Name" signature line near the end of the "REPORT OF INDEPENDENT REGISTERED PUBLIC ACCOUNTING FIRM" section; the firm name repeats on the next line and may be followed by a website URL (e.g. www.malonebailey.com) — ignore the URL, use only the firm name exactly as written after "/s/" (e.g. "MaloneBailey, LLP", "Marcum llp", "WithumSmith+Brown, PC")
 - auditor_since: integer year from phrases like "We have served as the Company's auditor since YYYY" or "auditor since inception" — null if not found
 - overallotment_option: integer share/unit count the underwriters have the option to purchase (e.g. "45-day option to purchase up to X additional units") — null if not found
 - underwriters: lead underwriter first, null values for unknown
@@ -286,6 +286,22 @@ def resolve_pick(pick, new, other_label="Other / New..."):
     if pick == other_label:
         return new.strip() or None
     return pick or None
+
+def _fuzzy_match(val, known_list, cutoff=0.75):
+    if not val:
+        return None
+    val_lower = val.lower().strip()
+    for k in known_list:
+        if k.lower() == val_lower:
+            return k
+    for k in known_list:
+        if k.lower() in val_lower:
+            return k
+    lower_known = [k.lower() for k in known_list]
+    m = difflib.get_close_matches(val_lower, lower_known, n=1, cutoff=cutoff)
+    if m:
+        return known_list[lower_known.index(m[0])]
+    return None
 
 # ── Session state ─────────────────────────────────────────────────────────────
 
@@ -554,8 +570,8 @@ if st.session_state.is_admin:
                 _known_aud    = load_known_auditors()
                 _aud_opts     = [""] + _known_aud + ["Other / New..."]
                 pf_auditor_raw = pf.get("auditor") or ""
-                _aud_fuzzy     = difflib.get_close_matches(pf_auditor_raw, _known_aud, n=1, cutoff=0.8)
-                pf_auditor     = _aud_fuzzy[0] if _aud_fuzzy else pf_auditor_raw
+                _aud_matched   = _fuzzy_match(pf_auditor_raw, _known_aud)
+                pf_auditor     = _aud_matched if _aud_matched else pf_auditor_raw
                 _aud_idx       = _aud_opts.index(pf_auditor) if pf_auditor in _known_aud else (len(_aud_opts) - 1 if pf_auditor else 0)
                 a_auditor_sel = st.selectbox("Auditor", _aud_opts, index=_aud_idx)
                 a_auditor_new = st.text_input("New auditor name", value=pf_auditor if pf_auditor not in _known_aud else "", placeholder="Type if not listed above")
@@ -574,15 +590,14 @@ if st.session_state.is_admin:
                 def _pf_uw_idx(val):
                     if not val:
                         return 0
-                    if val in _known_uws:
-                        return _uw_opts.index(val)
-                    m = difflib.get_close_matches(val, _known_uws, n=1, cutoff=0.8)
-                    return _uw_opts.index(m[0]) if m else len(_uw_opts) - 1
+                    m = _fuzzy_match(val, _known_uws)
+                    if m:
+                        return _uw_opts.index(m)
+                    return len(_uw_opts) - 1
                 def _pf_uw_new(val):
-                    if not val or val in _known_uws:
+                    if not val:
                         return ""
-                    m = difflib.get_close_matches(val, _known_uws, n=1, cutoff=0.8)
-                    return "" if m else val
+                    return "" if _fuzzy_match(val, _known_uws) else val
                 uwc1, uwc2 = st.columns(2)
                 with uwc1:
                     pf_uw0 = pf_uws[0] if len(pf_uws) > 0 else ""
