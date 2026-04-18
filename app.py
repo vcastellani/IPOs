@@ -143,7 +143,7 @@ def extract_from_424b4(url: str) -> dict:
         m = re.search(pat, text, re.IGNORECASE)
         if m:
             start = max(0, m.start() - 300)
-            auditor_section = text[start:start + 5000]
+            auditor_section = text[start:start + 10000]
             break
     # Always include a large tail in case section is near the very end
     tail = text[-8000:]
