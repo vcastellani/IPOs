@@ -421,7 +421,12 @@ if st.session_state.is_admin:
     # ── Add ───────────────────────────────────────────────────────────────────
     with tab_add:
         # Outside-form selectors for instant reactivity
+        if "prefill_sec_type_pending" in st.session_state:
+            st.session_state["add_sec_type"] = st.session_state.pop("prefill_sec_type_pending")
+        if "prefill_uw_mode_pending" in st.session_state:
+            st.session_state["add_uw_mode"] = st.session_state.pop("prefill_uw_mode_pending")
         sel_col1, sel_col2 = st.columns(2)
+
         with sel_col1:
             st.markdown("##### Securities Type")
             a_sec_type     = st.selectbox("Securities Type", SECURITY_TYPES, key="add_sec_type", label_visibility="collapsed")
@@ -448,10 +453,10 @@ if st.session_state.is_admin:
                             data = extract_from_424b4(pf_url)
                             st.session_state.prefill_424b4 = data
                             if data.get("securities_type") in SECURITY_TYPES:
-                                st.session_state["add_sec_type"] = data["securities_type"]
+                                st.session_state["prefill_sec_type_pending"] = data["securities_type"]
                             uws = data.get("underwriters") or []
                             if len(uws) > 1:
-                                st.session_state["add_uw_mode"] = "Multiple"
+                            st.session_state["prefill_uw_mode_pending"] = "Multiple"
                             st.success("Extracted — review fields below and submit.")
                             st.rerun()
                         except Exception as e:
