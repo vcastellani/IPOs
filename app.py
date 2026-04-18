@@ -507,7 +507,7 @@ if st.session_state.is_admin:
                             st.spinner("Reading prospectus...")
                             data = extract_from_424b4(pf_url)
                             data["prospectus_url"] = pf_url
-                            data["cik"] = pf_cik
+                            data["cik"] = f"{int(pf_cik):010d}"
                             cik_int = int(pf_cik)
                             data["edgar_url"] = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik_int:010d}&type=&dateb=&owner=include&count=40"
                             st.session_state.prefill_424b4 = data
