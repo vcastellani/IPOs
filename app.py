@@ -480,7 +480,8 @@ if st.session_state.is_admin:
             with fi2:
                 a_8k_url = st.text_input("8-K URL")
             with fi3:
-                a_prospectus_url = st.text_input("Prospectus (424B4) URL")
+                a_prospectus_url = st.text_input("Prospectus (424B4) URL", value=pf.get("prospectus_url", ""))
+
 
             c1, c2, c3 = st.columns(3)
 
