@@ -574,11 +574,17 @@ if st.session_state.is_admin:
                 _known_uws = load_known_underwriters()
                 _uw_opts   = [""] + _known_uws + ["Other / New..."]
                 def _pf_uw_idx(val):
+                    if not val:
+                        return 0
                     if val in _known_uws:
                         return _uw_opts.index(val)
-                    return len(_uw_opts) - 1 if val else 0
+                    m = difflib.get_close_matches(val, _known_uws, n=1, cutoff=0.8)
+                    return _uw_opts.index(m[0]) if m else len(_uw_opts) - 1
                 def _pf_uw_new(val):
-                    return val if val and val not in _known_uws else ""
+                    if not val or val in _known_uws:
+                        return ""
+                    m = difflib.get_close_matches(val, _known_uws, n=1, cutoff=0.8)
+                    return "" if m else val
                 if a_uw_mode == "Solo":
                     pf_uw0     = pf_uws[0] if len(pf_uws) > 0 else ""
                     a_uw_1_sel = st.selectbox("Underwriter", _uw_opts, index=_pf_uw_idx(pf_uw0))
