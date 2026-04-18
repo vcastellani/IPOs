@@ -679,7 +679,7 @@ if st.session_state.is_admin:
                         "auditor":                resolve_pick(a_auditor_sel, a_auditor_new) or None,
                         "auditor_since":          a_auditor_since or None,
                         "audit_partner_id":       a_audit_partner_id or None,
-                        "effective_date":         a_effective.isoformat() if a_effective else None,
+                        "effective_date":         a_effective if a_effective else None,
                         "ipo_date":               a_ipo.isoformat() if a_ipo else None,
                         "offer_price":            10.00,
                         "securities_type":        a_sec_type,
