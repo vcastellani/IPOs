@@ -515,10 +515,12 @@ if st.session_state.is_admin:
                 if pf_cik and pf_date:
                     with st.spinner("Looking up EDGAR..."):
                         try:
-                            pf_url = find_424b4_url(pf_cik, pf_date.isoformat())
+                            urls = find_edgar_urls(pf_cik, pf_date.isoformat())
+                            pf_url = urls["prospectus_url"]
                             st.spinner("Reading prospectus...")
                             data = extract_from_424b4(pf_url)
                             data["prospectus_url"] = pf_url
+                            data["s1_url"] = urls.get("s1_url")
                             data["cik"] = f"{int(pf_cik):010d}"
                             data["effective_date"] = pf_date.isoformat()
                             cik_int = int(pf_cik)
@@ -544,7 +546,7 @@ if st.session_state.is_admin:
             st.markdown("**Initial Filings**")
             fi1, fi2, fi3 = st.columns(3)
             with fi1:
-                a_s1_url = st.text_input("S-1 URL")
+                a_s1_url = st.text_input("S-1 URL", value=pf.get("s1_url") or "")
             with fi2:
                 a_8k_url = st.text_input("8-K URL")
             with fi3:
