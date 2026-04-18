@@ -498,7 +498,7 @@ if st.session_state.is_admin:
                 _aud_idx      = _aud_opts.index(pf_auditor) if pf_auditor in _known_aud else (len(_aud_opts) - 1 if pf_auditor else 0)
                 a_auditor_sel = st.selectbox("Auditor", _aud_opts, index=_aud_idx)
                 a_auditor_new = st.text_input("New auditor name", value=pf_auditor if pf_auditor not in _known_aud else "", placeholder="Type if not listed above")
-                a_auditor_since     = st.text_input("Auditor Since")
+                a_auditor_since     = st.text_input("Auditor Since", value=str(pf.get("auditor_since", "")) if pf.get("auditor_since") else "")
                 a_audit_partner_id  = st.text_input("Audit Partner ID")
                 a_image             = st.text_input("Image URL")
 
