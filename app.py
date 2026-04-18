@@ -562,7 +562,7 @@ if st.session_state.is_admin:
 
             with c2:
                 st.markdown("**Dates & Pricing**")
-                a_effective = st.date_input("Effective Date", value=None)
+                a_effective = pf.get("effective_date")
                 a_ipo       = st.date_input("IPO Date", value=None)
 
                 st.markdown("**Underwriters**")
