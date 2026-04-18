@@ -196,7 +196,7 @@ Filing text:
         raw = re.sub(r"\s*```$", "", raw.strip())
     return json.loads(raw)
 
-def find_424b4_url(cik: str, effect_date: str) -> str:
+def find_edgar_urls(cik: str, effect_date: str) -> dict:
     from datetime import date as _date, timedelta
     cik_int = int(cik)
     resp = requests.get(
@@ -211,22 +211,29 @@ def find_424b4_url(cik: str, effect_date: str) -> str:
     dates      = filings.get("filingDate", [])
     accessions = filings.get("accessionNumber", [])
     docs       = filings.get("primaryDocument", [])
+
     effect_dt    = _date.fromisoformat(effect_date)
     window_start = effect_dt - timedelta(days=3)
     window_end   = effect_dt + timedelta(days=21)
-    candidates = []
-    for i, form in enumerate(forms):
-        if form == "424B4":
-            filed_dt = _date.fromisoformat(dates[i])
-            if window_start <= filed_dt <= window_end:
-                candidates.append((filed_dt, i))
-    if not candidates:
-        raise ValueError(f"No 424B4 found for CIK {cik} within 3 days before / 21 days after {effect_date}")
-    candidates.sort()
-    i = candidates[0][1]
-    accession = accessions[i].replace("-", "")
-    return f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{accession}/{docs[i]}"
 
+    prospectus_url = None
+    s1_url         = None
+    s1_date        = None
+
+    for i, form in enumerate(forms):
+        filed_dt = _date.fromisoformat(dates[i])
+        accession = accessions[i].replace("-", "")
+        base = f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{accession}/{docs[i]}"
+        if form == "424B4" and window_start <= filed_dt <= window_end and prospectus_url is None:
+            prospectus_url = base
+        if form == "S-1" and filed_dt < effect_dt:
+            if s1_date is None or filed_dt > s1_date:
+                s1_url  = base
+                s1_date = filed_dt
+
+    if prospectus_url is None:
+        raise ValueError(f"No 424B4 found for CIK {cik} within 3 days before / 21 days after {effect_date}")
+    return {"prospectus_url": prospectus_url, "s1_url": s1_url}
 
 def refresh():
     st.cache_data.clear()
