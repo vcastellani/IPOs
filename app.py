@@ -456,7 +456,7 @@ if st.session_state.is_admin:
                                 st.session_state["prefill_sec_type_pending"] = data["securities_type"]
                             uws = data.get("underwriters") or []
                             if len(uws) > 1:
-                            st.session_state["prefill_uw_mode_pending"] = "Multiple"
+                                st.session_state["prefill_uw_mode_pending"] = "Multiple"
                             st.success("Extracted — review fields below and submit.")
                             st.rerun()
                         except Exception as e:
