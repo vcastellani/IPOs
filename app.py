@@ -181,7 +181,6 @@ Rules:
 - auditor_since: integer year from phrases like "We have served as the Company's auditor since YYYY" or "auditor since inception" — null if not found
 - underwriters: lead underwriter first, null values for unknown
 
-
 Filing text:
 {excerpt}"""}],
     )
@@ -192,26 +191,36 @@ Filing text:
         raw = re.sub(r"\s*```$", "", raw.strip())
     return json.loads(raw)
 
-def find_424b4_url(cik: str, filing_date: str) -> str:
+def find_424b4_url(cik: str, effect_date: str) -> str:
+    from datetime import date as _date, timedelta
     cik_int = int(cik)
-    url = f"https://data.sec.gov/submissions/CIK{cik_int:010d}.json"
     resp = requests.get(
-        url,
+        f"https://data.sec.gov/submissions/CIK{cik_int:010d}.json",
         headers={"User-Agent": "SPACTracker/1.0 research@example.com"},
         timeout=15,
     )
     resp.raise_for_status()
     data = resp.json()
-    filings = data.get("filings", {}).get("recent", {})
+    filings    = data.get("filings", {}).get("recent", {})
     forms      = filings.get("form", [])
     dates      = filings.get("filingDate", [])
     accessions = filings.get("accessionNumber", [])
     docs       = filings.get("primaryDocument", [])
+    effect_dt  = _date.fromisoformat(effect_date)
+    window_end = effect_dt + timedelta(days=7)
+    candidates = []
     for i, form in enumerate(forms):
-        if form == "424B4" and dates[i] == filing_date:
-            accession = accessions[i].replace("-", "")
-            return f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{accession}/{docs[i]}"
-    raise ValueError(f"No 424B4 found for CIK {cik} on {filing_date}")
+        if form == "424B4":
+            filed_dt = _date.fromisoformat(dates[i])
+            if effect_dt <= filed_dt <= window_end:
+                candidates.append((filed_dt, i))
+    if not candidates:
+        raise ValueError(f"No 424B4 found for CIK {cik} within 7 days after {effect_date}")
+    candidates.sort()
+    i = candidates[0][1]
+    accession = accessions[i].replace("-", "")
+    return f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{accession}/{docs[i]}"
+
 
 def refresh():
     st.cache_data.clear()
