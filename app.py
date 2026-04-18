@@ -555,7 +555,7 @@ if st.session_state.is_admin:
                 a_exchange      = st.selectbox("Exchange", EXCHANGES)
                 _known_aud    = load_known_auditors()
                 _aud_opts     = [""] + _known_aud + ["Other / New..."]
-                pf_auditor_raw = pf.get("auditor", "")
+                pf_auditor_raw = pf.get("auditor") or ""
                 _aud_fuzzy     = difflib.get_close_matches(pf_auditor_raw, _known_aud, n=1, cutoff=0.8)
                 pf_auditor     = _aud_fuzzy[0] if _aud_fuzzy else pf_auditor_raw
                 _aud_idx       = _aud_opts.index(pf_auditor) if pf_auditor in _known_aud else (len(_aud_opts) - 1 if pf_auditor else 0)
