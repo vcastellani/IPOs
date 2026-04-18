@@ -509,7 +509,7 @@ if st.session_state.is_admin:
                             data["prospectus_url"] = pf_url
                             data["cik"] = f"{int(pf_cik):010d}"
                             cik_int = int(pf_cik)
-                            data["edgar_url"] = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik_int:010d}&type=&dateb=&owner=include&count=40"
+                            data["edgar_url"] = f"https://www.sec.gov/edgar/browse/?CIK={cik_int:010d}"
                             st.session_state.prefill_424b4 = data
                             if data.get("securities_type") in SECURITY_TYPES:
                                 st.session_state["prefill_sec_type_pending"] = data["securities_type"]
