@@ -160,7 +160,15 @@ def extract_from_424b4(url: str) -> dict:
             "text": "You are a financial document parser for SEC filings. Return only valid JSON, no markdown.",
             "cache_control": {"type": "ephemeral"},
         }],
-        messages=[{"role": "user", "content": f"""Extract these fields from the SPAC 424B4 prospectus. Return ONLY a raw JSON object:
+        messages=[
+            {"role": "user", "content": f"""Extract these fields from the SPAC 424B4 prospectus. Return ONLY a raw JSON object with no explanation:
+
+{json_template_and_rules}
+
+Filing text:
+{excerpt}"""},
+            {"role": "assistant", "content": "{"},
+        ],
 
 {{
   "company_name": "full legal company name",
@@ -190,10 +198,7 @@ Rules:
 Filing text:
 {excerpt}"""}],
     )
-    raw = msg.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?\s*", "", raw)
-        raw = re.sub(r"\s*```$", "", raw.strip())
+    raw = "{" + msg.content[0].text.strip()
     try:
         return json.loads(raw)
     except json.JSONDecodeError as e:
