@@ -206,16 +206,17 @@ def find_424b4_url(cik: str, effect_date: str) -> str:
     dates      = filings.get("filingDate", [])
     accessions = filings.get("accessionNumber", [])
     docs       = filings.get("primaryDocument", [])
-    effect_dt  = _date.fromisoformat(effect_date)
-    window_end = effect_dt + timedelta(days=7)
+    effect_dt    = _date.fromisoformat(effect_date)
+    window_start = effect_dt - timedelta(days=3)
+    window_end   = effect_dt + timedelta(days=21)
     candidates = []
     for i, form in enumerate(forms):
         if form == "424B4":
             filed_dt = _date.fromisoformat(dates[i])
-            if effect_dt <= filed_dt <= window_end:
+            if window_start <= filed_dt <= window_end:
                 candidates.append((filed_dt, i))
     if not candidates:
-        raise ValueError(f"No 424B4 found for CIK {cik} within 7 days after {effect_date}")
+        raise ValueError(f"No 424B4 found for CIK {cik} within 3 days before / 21 days after {effect_date}")
     candidates.sort()
     i = candidates[0][1]
     accession = accessions[i].replace("-", "")
