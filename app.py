@@ -187,8 +187,7 @@ Rules:
 - securities_type must be exactly one of: "Shares", "Units - Shares and Warrants", "Units - Shares and Rights", "Units - Shares, Warrants, and Rights"
 - securities_offered is the integer share/unit count (not a dollar amount)
 - warrant_count is warrants per unit (e.g. 0.5), null if not applicable
-- rights_count is rights per unit as a decimal: if a unit contains 1 right use 1.0, if 1/2 right use 0.5, if 1/5 of a right (or "one right per 5 units") use 0.2; null if not applicable
-- rights_count: IMPORTANT — express as rights PER UNIT as a decimal. "one right per unit" = 1.0. "one right for every 5 units" or "1/5 of one right" or "one right per five units" = 0.2. "one-half of one right" = 0.5. Do NOT return 1 if the unit contains a fractional right — calculate the decimal carefully. null if no rights.
+- rights_count: IMPORTANT - express as rights PER UNIT as a decimal. "one right per unit" = 1.0. "one right for every 5 units" or "1/5 of one right" or "one right per five units" = 0.2. "one-half of one right" = 0.5. Do NOT return 1 if the unit contains a fractional right - calculate the decimal carefully. null if no rights.
 - warrant_strike_price is the exercise price in dollars, null if not applicable
 - auditor: find the "/s/ Firm Name" signature line near the end of the "REPORT OF INDEPENDENT REGISTERED PUBLIC ACCOUNTING FIRM" section; the firm name repeats on the next line and may be followed by a website URL (e.g. www.malonebailey.com) — ignore the URL, use only the firm name exactly as written after "/s/" (e.g. "MaloneBailey, LLP", "Marcum llp", "WithumSmith+Brown, PC")
 - auditor_since: integer year from phrases like "We have served as the Company's auditor since YYYY" or "auditor since inception" — null if not found
