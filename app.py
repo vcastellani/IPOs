@@ -487,7 +487,7 @@ if st.session_state.is_admin:
             st.markdown("##### Underwriters")
             a_uw_mode = st.radio("Underwriter count", ["Solo", "Multiple"], horizontal=True, key="add_uw_mode")
 
-        st.markdown("**Pre-fill from EDGAR (CIK + 424B4 Filing Date)**")
+        st.markdown("**Pre-fill from EDGAR (CIK + EFFECT Date)**")
         pf_col1, pf_col2, pf_col3 = st.columns([2, 2, 1])
         with pf_col1:
             pf_cik = st.text_input(
@@ -496,7 +496,7 @@ if st.session_state.is_admin:
                 placeholder="CIK (e.g. 1926599)",
             )
         with pf_col2:
-            pf_date = st.date_input("424B4 Filing Date", value=None, key="pf_424b4_date", label_visibility="collapsed")
+                        pf_date = st.date_input("EFFECT Date", value=None, key="pf_424b4_date", label_visibility="collapsed")
         with pf_col3:
             if st.button("Find & Extract", key="pf_extract", use_container_width=True):
                 if pf_cik and pf_date:
