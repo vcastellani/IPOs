@@ -129,15 +129,25 @@ def extract_from_424b4(url: str) -> dict:
 
     text = re.sub(r"<[^>]+>", " ", resp.text)
     text = re.sub(r"\s+", " ", text).strip()
+    
+    # Find auditor section using multiple patterns
+    auditor_section = ""
+    for pat in [
+        r'EXPERTS',
+        r'CERTAIN LEGAL MATTERS',
+        r'audited by',
+        r'independent registered public accounting firm',
+        r'independent auditors',
+    ]:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            start = max(0, m.start() - 300)
+            auditor_section = text[start:start + 5000]
+            break
+    # Always include a large tail in case section is near the very end
+    tail = text[-8000:]
+    excerpt = text[:15000] + "\n\n[...]\n\n" + auditor_section + "\n\n[end of doc]\n\n" + tail
 
-    # Cover page + targeted Experts/auditor section
-    experts_match = re.search(r'EXPERTS|Independent Registered Public Accounting Firm', text, re.IGNORECASE)
-    if experts_match:
-        start = max(0, experts_match.start() - 200)
-        experts_section = text[start:start + 4000]
-    else:
-        experts_section = text[-5000:]
-    excerpt = text[:15000] + "\n\n[...]\n\n" + experts_section
 
 
     msg = anthropic_client().messages.create(
