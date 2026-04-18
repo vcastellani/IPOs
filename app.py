@@ -296,7 +296,7 @@ def _fuzzy_match(val, known_list, cutoff=0.75):
         if k.lower() == val_lower:
             return k
     for k in known_list:
-        if k.lower() in val_lower:
+        if k.lower() in val_lower or val_lower in k.lower():
             return k
     lower_known = [k.lower() for k in known_list]
     m = difflib.get_close_matches(val_lower, lower_known, n=1, cutoff=cutoff)
