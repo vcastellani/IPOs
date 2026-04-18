@@ -133,11 +133,12 @@ def extract_from_424b4(url: str) -> dict:
     # Find auditor section using multiple patterns
     auditor_section = ""
     for pat in [
+        r'REPORT OF INDEPENDENT REGISTERED PUBLIC ACCOUNTING FIRM',
+        r'served as the Company',
         r'EXPERTS',
         r'CERTAIN LEGAL MATTERS',
         r'audited by',
         r'independent registered public accounting firm',
-        r'independent auditors',
     ]:
         m = re.search(pat, text, re.IGNORECASE)
         if m:
@@ -176,7 +177,8 @@ Rules:
 - securities_offered is the integer share/unit count (not a dollar amount)
 - warrant_count is warrants per unit (e.g. 0.5), null if not applicable
 - warrant_strike_price is the exercise price in dollars, null if not applicable
-- auditor_since: integer year the auditor was first engaged (from "Experts" or "Independent Registered Public Accounting Firm" section), null if unknown
+- auditor: look for "/s/ Firm Name" signature lines in the audit report, or firm name near "independent registered public accounting firm"
+- auditor_since: integer year from phrases like "We have served as the Company's auditor since YYYY" or "auditor since inception" — null if not found
 - underwriters: lead underwriter first, null values for unknown
 
 
