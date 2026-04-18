@@ -168,6 +168,7 @@ def extract_from_424b4(url: str) -> dict:
   "auditor": "Audit firm name",
   "auditor_since": 2021,
   "underwriters": ["Lead Underwriter", "Co-Underwriter"],
+  "overallotment_option": 1875000,
   "warrant_count": 0.5,
   "warrant_strike_price": 11.50
 }}
@@ -179,6 +180,7 @@ Rules:
 - warrant_strike_price is the exercise price in dollars, null if not applicable
 - auditor: look for "/s/ Firm Name" signature lines in the audit report, or firm name near "independent registered public accounting firm"
 - auditor_since: integer year from phrases like "We have served as the Company's auditor since YYYY" or "auditor since inception" — null if not found
+- overallotment_option: integer share/unit count the underwriters have the option to purchase (e.g. "45-day option to purchase up to X additional units") — null if not found
 - underwriters: lead underwriter first, null values for unknown
 
 Filing text:
@@ -629,7 +631,7 @@ if st.session_state.is_admin:
                     a_rights_count = None
 
                 st.markdown("**Overallotment**")
-                a_oa_option         = st.number_input("Total Option (securities)", min_value=0, step=100_000, value=None)
+                a_oa_option         = st.number_input("Total Option (securities)", min_value=0, step=100_000, value=int(pf["overallotment_option"]) if pf.get("overallotment_option") else None)
                 a_oa_exercised      = st.number_input("Exercised (securities)", min_value=0, step=100_000, value=None)
                 a_oa_exercised_date = st.date_input("Exercise Date", value=None, key="add_oa_ex_date")
 
