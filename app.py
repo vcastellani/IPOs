@@ -148,6 +148,7 @@ def extract_from_424b4(url: str) -> dict:
   "securities_offered": 12500000,
   "securities_type": "Units - Shares and Warrants",
   "auditor": "Audit firm name",
+  "auditor_since": 2021,
   "underwriters": ["Lead Underwriter", "Co-Underwriter"],
   "warrant_count": 0.5,
   "warrant_strike_price": 11.50
@@ -158,7 +159,9 @@ Rules:
 - securities_offered is the integer share/unit count (not a dollar amount)
 - warrant_count is warrants per unit (e.g. 0.5), null if not applicable
 - warrant_strike_price is the exercise price in dollars, null if not applicable
+- auditor_since: integer year the auditor was first engaged (from "Experts" or "Independent Registered Public Accounting Firm" section), null if unknown
 - underwriters: lead underwriter first, null values for unknown
+
 
 Filing text:
 {excerpt}"""}],
