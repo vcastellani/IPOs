@@ -510,6 +510,7 @@ if st.session_state.is_admin:
                             data = extract_from_424b4(pf_url)
                             data["prospectus_url"] = pf_url
                             data["cik"] = f"{int(pf_cik):010d}"
+                            data["effective_date"] = pf_date.isoformat()
                             cik_int = int(pf_cik)
                             data["edgar_url"] = f"https://www.sec.gov/edgar/browse/?CIK={cik_int:010d}"
                             st.session_state.prefill_424b4 = data
