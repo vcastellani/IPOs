@@ -454,6 +454,7 @@ if st.session_state.is_admin:
                     with st.spinner("Reading prospectus..."):
                         try:
                             data = extract_from_424b4(pf_url)
+                            data["prospectus_url"] = pf_url
                             st.session_state.prefill_424b4 = data
                             if data.get("securities_type") in SECURITY_TYPES:
                                 st.session_state["prefill_sec_type_pending"] = data["securities_type"]
