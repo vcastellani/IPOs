@@ -533,8 +533,8 @@ if st.session_state.is_admin:
             with c1:
                 st.markdown("**Company**")
                 a_name = st.text_input("Company Name *", value=pf.get("company_name", ""))
-                a_cik           = st.text_input("CIK")
-                a_edgar_url     = st.text_input("EDGAR Homepage URL")
+                a_cik           = st.text_input("CIK", value=pf.get("cik", ""))
+                a_edgar_url     = st.text_input("EDGAR Homepage URL", value=pf.get("edgar_url", ""))
                 a_ticker        = st.text_input("Common Stock Ticker")
                 a_exchange      = st.selectbox("Exchange", EXCHANGES)
                 _known_aud    = load_known_auditors()
