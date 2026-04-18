@@ -7,6 +7,7 @@ import zipfile
 import io
 import re
 import json
+import difflib
 import anthropic
 
 
