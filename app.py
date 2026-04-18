@@ -190,12 +190,14 @@ Rules:
 Filing text:
 {excerpt}"""}],
     )
-
     raw = msg.content[0].text.strip()
     if raw.startswith("```"):
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
         raw = re.sub(r"\s*```$", "", raw.strip())
-    return json.loads(raw)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Claude returned non-JSON (first 300 chars): {raw[:300]}") from e
 
 def find_edgar_urls(cik: str, effect_date: str) -> dict:
     from datetime import date as _date, timedelta
