@@ -164,7 +164,12 @@ Filing text:
 {excerpt}"""}],
     )
 
-    return json.loads(msg.content[0].text)
+    raw = msg.content[0].text.strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw.strip())
+    return json.loads(raw)
+
 
 def refresh():
     st.cache_data.clear()
