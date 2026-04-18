@@ -170,15 +170,17 @@ def extract_from_424b4(url: str) -> dict:
   "underwriters": ["Lead Underwriter", "Co-Underwriter"],
   "overallotment_option": 1875000,
   "warrant_count": 0.5,
-  "warrant_strike_price": 11.50
+  "warrant_strike_price": 11.50, 
+  "rights_count": 0.1
 }}
 
 Rules:
 - securities_type must be exactly one of: "Shares", "Units - Shares and Warrants", "Units - Shares and Rights", "Units - Shares, Warrants, and Rights"
 - securities_offered is the integer share/unit count (not a dollar amount)
 - warrant_count is warrants per unit (e.g. 0.5), null if not applicable
+- rights_count is rights per unit (e.g. 0.1), null if not applicable
 - warrant_strike_price is the exercise price in dollars, null if not applicable
-- auditor: look for "/s/ Firm Name" signature lines in the audit report, or firm name near "independent registered public accounting firm"
+- auditor: find the "/s/ Firm Name" signature line near the end of the "REPORT OF INDEPENDENT REGISTERED PUBLIC ACCOUNTING FIRM" section — the firm name appears on the line after "/s/" as well; use that name (e.g. "Marcum llp", "WithumSmith+Brown, PC")
 - auditor_since: integer year from phrases like "We have served as the Company's auditor since YYYY" or "auditor since inception" — null if not found
 - overallotment_option: integer share/unit count the underwriters have the option to purchase (e.g. "45-day option to purchase up to X additional units") — null if not found
 - underwriters: lead underwriter first, null values for unknown
@@ -627,7 +629,8 @@ if st.session_state.is_admin:
                     a_warrant_strike = None
 
                 if a_has_rights:
-                    a_rights_count = st.number_input("Number of Rights", min_value=0.0, step=0.5, value=None)
+                    a_rights_count = st.number_input("Number of Rights", min_value=0.0, step=0.5, value=float(pf["rights_count"]) if pf.get("rights_count") else None)
+
                 else:
                     a_rights_count = None
 
