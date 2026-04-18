@@ -224,7 +224,7 @@ def find_edgar_urls(cik: str, effect_date: str) -> dict:
         filed_dt = _date.fromisoformat(dates[i])
         accession = accessions[i].replace("-", "")
         base = f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{accession}/{docs[i]}"
-        if form == "424B4" and window_start <= filed_dt <= window_end and prospectus_url is None:
+        if form in ("424B4", "424B3") and window_start <= filed_dt <= window_end and prospectus_url is None:
             prospectus_url = base
         if form == "S-1" and filed_dt < effect_dt:
             if s1_date is None or filed_dt > s1_date:
@@ -232,7 +232,7 @@ def find_edgar_urls(cik: str, effect_date: str) -> dict:
                 s1_date = filed_dt
 
     if prospectus_url is None:
-        raise ValueError(f"No 424B4 found for CIK {cik} within 3 days before / 21 days after {effect_date}")
+        raise ValueError(f"No 424B4 or 424B3 found for CIK {cik} within 3 days before / 21 days after {effect_date}")
     return {"prospectus_url": prospectus_url, "s1_url": s1_url}
 
 def refresh():
