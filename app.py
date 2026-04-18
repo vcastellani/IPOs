@@ -192,6 +192,26 @@ Filing text:
         raw = re.sub(r"\s*```$", "", raw.strip())
     return json.loads(raw)
 
+def find_424b4_url(cik: str, filing_date: str) -> str:
+    cik_int = int(cik)
+    url = f"https://data.sec.gov/submissions/CIK{cik_int:010d}.json"
+    resp = requests.get(
+        url,
+        headers={"User-Agent": "SPACTracker/1.0 research@example.com"},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    filings = data.get("filings", {}).get("recent", {})
+    forms      = filings.get("form", [])
+    dates      = filings.get("filingDate", [])
+    accessions = filings.get("accessionNumber", [])
+    docs       = filings.get("primaryDocument", [])
+    for i, form in enumerate(forms):
+        if form == "424B4" and dates[i] == filing_date:
+            accession = accessions[i].replace("-", "")
+            return f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{accession}/{docs[i]}"
+    raise ValueError(f"No 424B4 found for CIK {cik} on {filing_date}")
 
 def refresh():
     st.cache_data.clear()
