@@ -130,8 +130,15 @@ def extract_from_424b4(url: str) -> dict:
     text = re.sub(r"<[^>]+>", " ", resp.text)
     text = re.sub(r"\s+", " ", text).strip()
 
-    # Cover page + end of doc (where Experts/auditor section lives)
-    excerpt = text[:15000] + "\n\n[...]\n\n" + text[-3000:]
+    # Cover page + targeted Experts/auditor section
+    experts_match = re.search(r'EXPERTS|Independent Registered Public Accounting Firm', text, re.IGNORECASE)
+    if experts_match:
+        start = max(0, experts_match.start() - 200)
+        experts_section = text[start:start + 4000]
+    else:
+        experts_section = text[-5000:]
+    excerpt = text[:15000] + "\n\n[...]\n\n" + experts_section
+
 
     msg = anthropic_client().messages.create(
         model="claude-sonnet-4-6",
