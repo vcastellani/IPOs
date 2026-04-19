@@ -177,8 +177,8 @@ def extract_from_424b4(url: str) -> dict:
     )
 
     msg = anthropic_client().messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=512,
+        model="claude-haiku-4-5-20251001",
+        max_tokens=1024,
         system=[{
             "type": "text",
             "text": "You are a financial document parser for SEC filings. Output ONLY a raw JSON object. No explanation, no reasoning, no markdown, no prose — just the JSON object starting with { and ending with }.",
