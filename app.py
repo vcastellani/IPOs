@@ -131,7 +131,6 @@ def extract_from_424b4(url: str) -> dict:
     text = re.sub(r"https?://\S+|www\.\S+", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
 
-    # Find auditor section using multiple patterns
     auditor_section = ""
     for pat in [
         r'REPORT OF INDEPENDENT REGISTERED PUBLIC ACCOUNTING FIRM',
@@ -146,11 +145,36 @@ def extract_from_424b4(url: str) -> dict:
             start = max(0, m.start() - 300)
             auditor_section = text[start:start + 10000]
             break
-    # Always include a large tail in case section is near the very end
     tail = text[-8000:]
     excerpt = text[:15000] + "\n\n[...]\n\n" + auditor_section + "\n\n[end of doc]\n\n" + tail
 
-
+    prompt = (
+        "Extract these fields from the SPAC 424B4 prospectus. Return ONLY a raw JSON object with no explanation:\n\n"
+        "{\n"
+        '  "company_name": "full legal company name",\n'
+        '  "securities_offered": 12500000,\n'
+        '  "securities_type": "Units - Shares and Warrants",\n'
+        '  "auditor": "Audit firm name",\n'
+        '  "auditor_since": 2021,\n'
+        '  "overallotment_option": 1875000,\n'
+        '  "underwriters": ["Lead Underwriter", "Co-Underwriter"],\n'
+        '  "warrant_count": 0.5,\n'
+        '  "warrant_strike_price": 11.50,\n'
+        '  "rights_count": 0.1\n'
+        "}\n\n"
+        "Rules:\n"
+        '- securities_type must be exactly one of: "Shares", "Units - Shares and Warrants", "Units - Shares and Rights", "Units - Shares, Warrants, and Rights"\n'
+        "- securities_offered is the integer share/unit count (not a dollar amount)\n"
+        "- warrant_count is warrants per unit (e.g. 0.5), null if not applicable\n"
+        "- rights_count: IMPORTANT - express as rights PER UNIT as a decimal. One right per unit = 1.0. One right for every 5 units or 1/5 of one right = 0.2. One-half of one right = 0.5. Do NOT return 1 if the unit contains a fractional right - calculate the decimal carefully. null if no rights.\n"
+        "- warrant_strike_price is the exercise price in dollars, null if not applicable\n"
+        '- auditor: find the "/s/ Firm Name" signature line near the end of the "REPORT OF INDEPENDENT REGISTERED PUBLIC ACCOUNTING FIRM" section; the firm name repeats on the next line and may be followed by a website URL - ignore the URL, use only the firm name exactly as written after "/s/" (e.g. "MaloneBailey, LLP", "Marcum llp", "WithumSmith+Brown, PC")\n'
+        '- auditor_since: integer year from phrases like "We have served as the Company\'s auditor since YYYY" or "auditor since inception" - null if not found\n'
+        "- overallotment_option: integer share/unit count the underwriters have the option to purchase - null if not found\n"
+        "- underwriters: lead underwriter first, null if not found\n\n"
+        "Filing text:\n"
+        + excerpt
+    )
 
     msg = anthropic_client().messages.create(
         model="claude-sonnet-4-6",
@@ -161,36 +185,17 @@ def extract_from_424b4(url: str) -> dict:
             "cache_control": {"type": "ephemeral"},
         }],
         messages=[
-            {"role": "user", "content": f"""Extract these fields from the SPAC 424B4 prospectus. Return ONLY a raw JSON object with no explanation:
-
-{{
-  "company_name": "full legal company name",
-  "securities_offered": 12500000,
-  "securities_type": "Units - Shares and Warrants",
-  "auditor": "Audit firm name",
-  "auditor_since": 2021,
-  "overallotment_option": 1875000,
-  "underwriters": ["Lead Underwriter", "Co-Underwriter"],
-  "warrant_count": 0.5,
-  "warrant_strike_price": 11.50,
-  "rights_count": 0.1
-}}
-
-Rules:
-- securities_type must be exactly one of: "Shares", "Units - Shares and Warrants", "Units - Shares and Rights", "Units - Shares, Warrants, and Rights"
-- securities_offered is the integer share/unit count (not a dollar amount)
-- warrant_count is warrants per unit (e.g. 0.5), null if not applicable
-- rights_count: IMPORTANT - express as rights PER UNIT as a decimal. "one right per unit" = 1.0. "one right for every 5 units" or "1/5 of one right" or "one right per five units" = 0.2. "one-half of one right" = 0.5. Do NOT return 1 if the unit contains a fractional right - calculate the decimal carefully. null if no rights.
-- warrant_strike_price is the exercise price in dollars, null if not applicable
-- auditor: find the "/s/ Firm Name" signature line near the end of the "REPORT OF INDEPENDENT REGISTERED PUBLIC ACCOUNTING FIRM" section; the firm name repeats on the next line and may be followed by a website URL (e.g. www.malonebailey.com) - ignore the URL, use only the firm name exactly as written after "/s/" (e.g. "MaloneBailey, LLP", "Marcum llp", "WithumSmith+Brown, PC")
-- auditor_since: integer year from phrases like "We have served as the Company's auditor since YYYY" or "auditor since inception" - null if not found
-- overallotment_option: integer share/unit count the underwriters have the option to purchase (e.g. "45-day option to purchase up to X additional units") - null if not found
-- underwriters: lead underwriter first, null if not found
-
-Filing text:
-{excerpt}"""},
-            {"role": "assistant", "content": "{{"},
+            {"role": "user", "content": prompt},
+            {"role": "assistant", "content": "{"},
         ],
+    )
+
+    raw = "{" + msg.content[0].text.strip()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Claude returned non-JSON (first 300 chars): {raw[:300]}") from e
+
 
 
 def find_edgar_urls(cik: str, effect_date: str) -> dict:
