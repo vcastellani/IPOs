@@ -197,9 +197,36 @@ def extract_from_424b4(url: str) -> dict:
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
         raw = re.sub(r"\s*```$", "", raw.strip())
     try:
-        return json.loads(raw)
+        result = json.loads(raw)
+        if (not result.get("auditor") or not result.get("auditor_since")) and auditor_section:
+            aud_prompt = (
+                "Extract auditor info from this SEC audit report. Return ONLY a JSON object:\n"
+                '{"auditor": "Firm Name", "auditor_since": 2024}\n\n'
+                "- auditor: firm name from the '/s/ Firm Name' signature line at the end\n"
+                "- auditor_since: integer year from 'We have served as the Company\\'s auditor since YYYY'\n\n"
+                "Audit report:\n" + auditor_section[-3000:]
+            )
+            aud_msg = anthropic_client().messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=100,
+                system=[{"type": "text", "text": "Return only valid JSON, no markdown, no explanation."}],
+                messages=[{"role": "user", "content": aud_prompt}],
+            )
+            aud_raw = aud_msg.content[0].text.strip()
+            aud_match = re.search(r'\{.*?\}', aud_raw, re.DOTALL)
+            if aud_match:
+                try:
+                    aud = json.loads(aud_match.group(0))
+                    if not result.get("auditor"):
+                        result["auditor"] = aud.get("auditor")
+                    if not result.get("auditor_since"):
+                        result["auditor_since"] = aud.get("auditor_since")
+                except json.JSONDecodeError:
+                    pass
+        return result
     except json.JSONDecodeError as e:
         raise ValueError(f"Claude returned non-JSON (first 300 chars): {raw[:300]}") from e
+
 
 def find_edgar_urls(cik: str, effect_date: str) -> dict:
     from datetime import date as _date, timedelta
