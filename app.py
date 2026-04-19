@@ -169,7 +169,7 @@ def extract_from_424b4(url: str) -> dict:
         "- rights_count: find the phrase 'one right to receive [fraction] of one share' and convert the fraction directly to a decimal - 'one-fifth' = 0.2, 'one-half' = 0.5, 'one-tenth' = 0.1, 'one' (whole share) = 1.0. Do NOT derive this by dividing - read the fraction as stated. null if no rights.\n"
         "- warrant_strike_price is the exercise price in dollars, null if not applicable\n"
         '- auditor: find the "/s/ Firm Name" signature line near the end of the "REPORT OF INDEPENDENT REGISTERED PUBLIC ACCOUNTING FIRM" section; the firm name repeats on the next line and may be followed by a website URL - ignore the URL, use only the firm name exactly as written after "/s/" (e.g. "MaloneBailey, LLP", "Marcum llp", "WithumSmith+Brown, PC")\n'
-        '- auditor_since: integer year from phrases like "We have served as the Company\'s auditor since YYYY" or "auditor since inception" - null if not found\n'
+        "- auditor_since: find the phrase 'We have served as the Company\\'s auditor since YYYY' and extract YYYY as an integer - this phrase appears right after the /s/ signature line; ignore any other years (report dates, city dates) nearby; null if not found\n"
         "- overallotment_option: integer share/unit count the underwriters have the option to purchase - null if not found\n"
         "- underwriters: lead underwriter first, null if not found\n\n"
         "Filing text:\n"
