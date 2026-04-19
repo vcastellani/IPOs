@@ -163,23 +163,16 @@ def extract_from_424b4(url: str) -> dict:
         messages=[
             {"role": "user", "content": f"""Extract these fields from the SPAC 424B4 prospectus. Return ONLY a raw JSON object with no explanation:
 
-{json_template_and_rules}
-
-Filing text:
-{excerpt}"""},
-            {"role": "assistant", "content": "{"},
-        ],
-
 {{
   "company_name": "full legal company name",
   "securities_offered": 12500000,
   "securities_type": "Units - Shares and Warrants",
   "auditor": "Audit firm name",
   "auditor_since": 2021,
-  "underwriters": ["Lead Underwriter", "Co-Underwriter"],
   "overallotment_option": 1875000,
+  "underwriters": ["Lead Underwriter", "Co-Underwriter"],
   "warrant_count": 0.5,
-  "warrant_strike_price": 11.50, 
+  "warrant_strike_price": 11.50,
   "rights_count": 0.1
 }}
 
@@ -190,18 +183,15 @@ Rules:
 - rights_count: IMPORTANT - express as rights PER UNIT as a decimal. "one right per unit" = 1.0. "one right for every 5 units" or "1/5 of one right" or "one right per five units" = 0.2. "one-half of one right" = 0.5. Do NOT return 1 if the unit contains a fractional right - calculate the decimal carefully. null if no rights.
 - warrant_strike_price is the exercise price in dollars, null if not applicable
 - auditor: find the "/s/ Firm Name" signature line near the end of the "REPORT OF INDEPENDENT REGISTERED PUBLIC ACCOUNTING FIRM" section; the firm name repeats on the next line and may be followed by a website URL (e.g. www.malonebailey.com) - ignore the URL, use only the firm name exactly as written after "/s/" (e.g. "MaloneBailey, LLP", "Marcum llp", "WithumSmith+Brown, PC")
-- auditor_since: integer year from phrases like "We have served as the Company's auditor since YYYY" or "auditor since inception". null if not found
-- overallotment_option: integer share/unit count the underwriters have the option to purchase (e.g. "45-day option to purchase up to X additional units"). null if not found
-- underwriters: lead underwriter first, null values for unknown
+- auditor_since: integer year from phrases like "We have served as the Company's auditor since YYYY" or "auditor since inception" - null if not found
+- overallotment_option: integer share/unit count the underwriters have the option to purchase (e.g. "45-day option to purchase up to X additional units") - null if not found
+- underwriters: lead underwriter first, null if not found
 
 Filing text:
-{excerpt}"""}],
-    )
-    raw = "{" + msg.content[0].text.strip()
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Claude returned non-JSON (first 300 chars): {raw[:300]}") from e
+{excerpt}"""},
+            {"role": "assistant", "content": "{{"},
+        ],
+
 
 def find_edgar_urls(cik: str, effect_date: str) -> dict:
     from datetime import date as _date, timedelta
