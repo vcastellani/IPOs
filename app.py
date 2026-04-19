@@ -181,16 +181,18 @@ def extract_from_424b4(url: str) -> dict:
         max_tokens=512,
         system=[{
             "type": "text",
-            "text": "You are a financial document parser for SEC filings. Return only valid JSON, no markdown.",
+            "text": "You are a financial document parser for SEC filings. Output ONLY a raw JSON object. No explanation, no reasoning, no markdown, no prose — just the JSON object starting with { and ending with }.",
             "cache_control": {"type": "ephemeral"},
         }],
         messages=[
             {"role": "user", "content": prompt},
-            {"role": "assistant", "content": "{"},
         ],
     )
 
-    raw = "{" + msg.content[0].text.strip()
+    raw = msg.content[0].text.strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw.strip())
     try:
         return json.loads(raw)
     except json.JSONDecodeError as e:
