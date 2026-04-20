@@ -243,6 +243,7 @@ def find_edgar_urls(cik: str, effect_date: str) -> dict:
     dates      = filings.get("filingDate", [])
     accessions = filings.get("accessionNumber", [])
     docs       = filings.get("primaryDocument", [])
+    items_list = filings.get("items", [])
 
     effect_dt    = _date.fromisoformat(effect_date)
     window_start = effect_dt - timedelta(days=3)
@@ -251,6 +252,8 @@ def find_edgar_urls(cik: str, effect_date: str) -> dict:
     prospectus_url = None
     s1_url         = None
     s1_date        = None
+    ipo_8k_url     = None
+    ipo_8k_date    = None
 
     for i, form in enumerate(forms):
         filed_dt = _date.fromisoformat(dates[i])
@@ -262,10 +265,17 @@ def find_edgar_urls(cik: str, effect_date: str) -> dict:
             if s1_date is None or filed_dt > s1_date:
                 s1_url  = base
                 s1_date = filed_dt
+        if form == "8-K" and filed_dt >= effect_dt:
+            raw_items = items_list[i] if i < len(items_list) else ""
+            item_parts = [p.strip() for p in str(raw_items).split(",")]
+            if "1.01" in item_parts and "3.02" in item_parts:
+                if ipo_8k_date is None or filed_dt < ipo_8k_date:
+                    ipo_8k_url  = base
+                    ipo_8k_date = filed_dt
 
     if prospectus_url is None:
         raise ValueError(f"No 424B4 or 424B3 found for CIK {cik} within 3 days before / 21 days after {effect_date}")
-    return {"prospectus_url": prospectus_url, "s1_url": s1_url}
+    return {"prospectus_url": prospectus_url, "s1_url": s1_url, "ipo_8k_url": ipo_8k_url}
 
 def refresh():
     st.cache_data.clear()
@@ -561,6 +571,7 @@ if st.session_state.is_admin:
                             data = extract_from_424b4(pf_url)
                             data["prospectus_url"] = pf_url
                             data["s1_url"] = urls.get("s1_url")
+                            data["ipo_8k_url"] = urls.get("ipo_8k_url")
                             data["cik"] = f"{int(pf_cik):010d}"
                             data["effective_date"] = pf_date.isoformat()
                             cik_int = int(pf_cik)
@@ -585,7 +596,7 @@ if st.session_state.is_admin:
             with fi1:
                 a_s1_url = st.text_input("S-1 URL", value=pf.get("s1_url") or "")
             with fi2:
-                a_8k_url = st.text_input("8-K URL")
+                a_8k_url = st.text_input("8-K URL", value=pf.get("ipo_8k_url") or "")
             with fi3:
                 a_prospectus_url = st.text_input("Prospectus (424B4) URL", value=pf.get("prospectus_url", ""))
 
