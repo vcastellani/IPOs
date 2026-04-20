@@ -310,6 +310,9 @@ def extract_from_8k(url: str) -> dict:
         "{\n"
         '  "ipo_date": "2024-01-15",\n'
         '  "ticker": "ACME",\n'
+        '  "ticker_units": "ACMEU",\n'
+        '  "ticker_warrants": "ACMEW",\n'
+        '  "ticker_rights": "ACMER",\n'
         '  "exchange": "NASDAQ",\n'
         '  "overallotment_exercised": 1875000,\n'
         '  "overallotment_exercised_date": "2024-01-15",\n'
@@ -322,7 +325,10 @@ def extract_from_8k(url: str) -> dict:
         "}\n\n"
         "Rules:\n"
         '- ipo_date: date the IPO was consummated/closed in YYYY-MM-DD format; look for "consummated its Initial Public Offering" or "closing of the Initial Public Offering"; null if not found\n'
-        '- ticker: the common stock or unit ticker symbol listed on the exchange (e.g. "ACMEU"); null if not found\n'
+        '- ticker: the common stock ticker symbol ONLY (NOT the units ticker) — this is the symbol under which shares of common stock trade separately, typically without a suffix (e.g. "ACME"); null if not found or if only units are listed\n'
+        '- ticker_units: the units ticker symbol (typically ends in "U", e.g. "ACMEU"); null if units are not listed or not issued\n'
+        '- ticker_warrants: the warrant ticker symbol (typically ends in "W" or "WS", e.g. "ACMEW"); null if no warrants\n'
+        '- ticker_rights: the rights ticker symbol (typically ends in "R", e.g. "ACMER"); null if no rights\n'
         '- exchange: must be exactly one of "NYSE", "NASDAQ", "AMEX"; null if not found\n'
         '- overallotment_exercised: integer count of securities the underwriters purchased under the over-allotment/greenshoe option; null if not mentioned\n'
         '- overallotment_exercised_date: YYYY-MM-DD date the over-allotment was exercised; null if not found\n'
@@ -337,7 +343,7 @@ def extract_from_8k(url: str) -> dict:
 
     msg = anthropic_client().messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=512,
+        max_tokens=600,
         system=[{
             "type": "text",
             "text": "You are a financial document parser for SEC filings. Output ONLY a raw JSON object. No explanation, no reasoning, no markdown, no prose — just the JSON object starting with { and ending with }.",
@@ -573,6 +579,9 @@ if not df.empty:
                     "CIK":                  row.get("cik"),
                     "EDGAR Homepage":       f"[SEC Filing Page]({row['edgar_url']})" if row.get("edgar_url") else None,
                     "Common Stock Ticker":  row.get("ticker"),
+                    "Units Ticker":         row.get("ticker_units"),
+                    "Warrant Ticker":       row.get("ticker_warrants"),
+                    "Rights Ticker":        row.get("ticker_rights"),
                     "Exchange":             row.get("exchange"),
                     "Auditor":              row.get("auditor"),
                     "Auditor Since":        row.get("auditor_since"),
@@ -698,8 +707,11 @@ if st.session_state.is_admin:
                 a_name = st.text_input("Company Name *", value=pf.get("company_name", ""))
                 a_cik           = st.text_input("CIK", value=pf.get("cik", ""))
                 a_edgar_url     = st.text_input("EDGAR Homepage URL", value=pf.get("edgar_url", ""))
-                a_ticker        = st.text_input("Common Stock Ticker", value=pf.get("ticker") or "")
-                a_exchange      = st.selectbox("Exchange", EXCHANGES, index=_idx(EXCHANGES, pf.get("exchange") or ""))
+                a_ticker          = st.text_input("Common Stock Ticker", value=pf.get("ticker") or "")
+                a_ticker_units    = st.text_input("Units Ticker", value=pf.get("ticker_units") or "")
+                a_ticker_warrants = st.text_input("Warrant Ticker", value=pf.get("ticker_warrants") or "")
+                a_ticker_rights   = st.text_input("Rights Ticker", value=pf.get("ticker_rights") or "")
+                a_exchange        = st.selectbox("Exchange", EXCHANGES, index=_idx(EXCHANGES, pf.get("exchange") or ""))
                 _known_aud    = load_known_auditors()
                 _aud_opts     = [""] + _known_aud + ["Other / New..."]
                 pf_auditor_raw = pf.get("auditor") or ""
@@ -830,6 +842,9 @@ if st.session_state.is_admin:
                         "cik":                    a_cik or None,
                         "edgar_url":              a_edgar_url or None,
                         "ticker":                 a_ticker or None,
+                        "ticker_units":           a_ticker_units or None,
+                        "ticker_warrants":        a_ticker_warrants or None,
+                        "ticker_rights":          a_ticker_rights or None,
                         "exchange":               a_exchange or None,
                         "auditor":                resolve_pick(a_auditor_sel, a_auditor_new) or None,
                         "auditor_since":          a_auditor_since or None,
@@ -908,8 +923,11 @@ if st.session_state.is_admin:
                         e_name          = st.text_input("Company Name", value=r.get("company_name", ""))
                         e_cik           = st.text_input("CIK", value=r.get("cik") or "")
                         e_edgar_url     = st.text_input("EDGAR Homepage URL", value=r.get("edgar_url") or "")
-                        e_ticker        = st.text_input("Common Stock Ticker", value=r.get("ticker") or "")
-                        e_exchange      = st.selectbox("Exchange", EXCHANGES, index=_idx(EXCHANGES, r.get("exchange") or ""))
+                        e_ticker          = st.text_input("Common Stock Ticker", value=r.get("ticker") or "")
+                        e_ticker_units    = st.text_input("Units Ticker", value=r.get("ticker_units") or "")
+                        e_ticker_warrants = st.text_input("Warrant Ticker", value=r.get("ticker_warrants") or "")
+                        e_ticker_rights   = st.text_input("Rights Ticker", value=r.get("ticker_rights") or "")
+                        e_exchange        = st.selectbox("Exchange", EXCHANGES, index=_idx(EXCHANGES, r.get("exchange") or ""))
                         _known_aud_e   = load_known_auditors()
                         _existing_aud  = r.get("auditor") or ""
                         _aud_opts_e    = [""] + _known_aud_e + ["Other / New..."]
@@ -1024,6 +1042,9 @@ if st.session_state.is_admin:
                             "cik":                    e_cik or None,
                             "edgar_url":              e_edgar_url or None,
                             "ticker":                 e_ticker or None,
+                            "ticker_units":           e_ticker_units or None,
+                            "ticker_warrants":        e_ticker_warrants or None,
+                            "ticker_rights":          e_ticker_rights or None,
                             "exchange":               e_exchange or None,
                             "auditor":                resolve_pick(e_auditor_sel, e_auditor_new) or None,
                             "auditor_since":          e_auditor_since or None,
