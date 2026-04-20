@@ -678,6 +678,7 @@ if st.session_state.is_admin:
                             st.session_state.prefill_424b4 = data
                             if data.get("securities_type") in SECURITY_TYPES:
                                 st.session_state["prefill_sec_type_pending"] = data["securities_type"]
+                            st.session_state["open_urls"] = [u for u in [pf_url, urls.get("ipo_8k_url")] if u]
                             st.success(f"Found 424B4 — review fields below and submit.")
                             st.rerun()
                         except Exception as e:
@@ -687,6 +688,19 @@ if st.session_state.is_admin:
 
         pf = st.session_state.get("prefill_424b4", {})
         pf_uws = pf.get("underwriters") or []
+
+        if "open_urls" in st.session_state:
+            _urls_to_open = st.session_state.pop("open_urls")
+            if _urls_to_open:
+                _js = "".join(
+                    f'(function(){{var a=document.createElement("a");'
+                    f'a.href={json.dumps(u)};a.target="_blank";'
+                    f'a.rel="noopener noreferrer";document.body.appendChild(a);'
+                    f'a.click();document.body.removeChild(a);}})();'
+                    for u in _urls_to_open
+                )
+                st.components.v1.html(f"<script>{_js}</script>", height=0)
+
         st.divider()
 
         with st.form("add_form", clear_on_submit=True):
