@@ -688,21 +688,13 @@ if st.session_state.is_admin:
         pf = st.session_state.get("prefill_424b4", {})
         pf_uws = pf.get("underwriters") or []
 
-        if pf.get("prospectus_url") or pf.get("ipo_8k_url"):
-            _doc_urls = [u for u in [pf.get("prospectus_url"), pf.get("ipo_8k_url")] if u]
-            if _doc_urls:
-                _open_calls = f"window.parent.open('{_doc_urls[0]}', '_blank');"
-                if len(_doc_urls) > 1:
-                    _open_calls += f" setTimeout(function(){{window.parent.open('{_doc_urls[1]}', '_blank');}}, 300);"
-                st.components.v1.html(
-                    f"""<button onclick="{_open_calls}" style="
-                        background:#000000;color:white;border:none;border-radius:6px;
-                        padding:10px 20px;font-size:15px;font-weight:600;cursor:pointer;
-                        font-family:sans-serif;width:100%;">
-                        Click Here for Documents &#8594; 📄
-                    </button>""",
-                    height=50,
-                )
+        _btn_cols = st.columns(2)
+        with _btn_cols[0]:
+            if pf.get("prospectus_url"):
+                st.link_button("424B4 Prospectus 📄", pf["prospectus_url"], use_container_width=True)
+        with _btn_cols[1]:
+            if pf.get("ipo_8k_url"):
+                st.link_button("IPO 8-K Filing 📄", pf["ipo_8k_url"], use_container_width=True)
 
         st.divider()
 
