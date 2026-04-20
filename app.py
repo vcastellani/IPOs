@@ -690,16 +690,16 @@ if st.session_state.is_admin:
 
         if pf.get("prospectus_url") or pf.get("ipo_8k_url"):
             _open_calls = " ".join(
-                f"window.open({json.dumps(u)}, '_blank');"
+                f"window.parent.open('{u}', '_blank');"
                 for u in [pf.get("prospectus_url"), pf.get("ipo_8k_url")]
                 if u
             )
             st.components.v1.html(
                 f"""<button onclick="{_open_calls}" style="
-                    background:#FF4B4B;color:white;border:none;border-radius:6px;
+                    background:#000000;color:white;border:none;border-radius:6px;
                     padding:10px 20px;font-size:15px;font-weight:600;cursor:pointer;
                     font-family:sans-serif;width:100%;">
-                    Click Here &#8594; &#128196;
+                    Click Here for Documents &#8594;
                 </button>""",
                 height=50,
             )
