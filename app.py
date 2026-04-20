@@ -131,20 +131,25 @@ def extract_from_424b4(url: str) -> dict:
     text = re.sub(r"https?://\S+|www\.\S+", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
 
-    auditor_section = ""
-    for pat in [
-        r'REPORT OF INDEPENDENT REGISTERED PUBLIC ACCOUNTING FIRM',
-        r'served as the Company',
-        r'EXPERTS',
-        r'CERTAIN LEGAL MATTERS',
-        r'audited by',
-        r'independent registered public accounting firm',
-    ]:
-        m = re.search(pat, text, re.IGNORECASE)
-        if m:
-            start = max(0, m.start() - 300)
-            auditor_section = text[start:start + 10000]
-            break
+    auditor_snippets = []
+    # Grab focused windows around every "auditor since" phrase
+    for m in re.finditer(r"We have served as the Company.{0,10}s auditor since", text, re.IGNORECASE):
+        start = max(0, m.start() - 500)
+        auditor_snippets.append(text[start:min(len(text), m.end() + 1500)])
+    # Use the LAST audit report header (actual report, not table-of-contents entry)
+    report_matches = list(re.finditer(r'REPORT OF INDEPENDENT REGISTERED PUBLIC ACCOUNTING FIRM', text, re.IGNORECASE))
+    if report_matches:
+        start = max(0, report_matches[-1].start() - 200)
+        auditor_snippets.append(text[start:min(len(text), start + 8000)])
+    # Fall back to broader patterns if nothing found
+    if not auditor_snippets:
+        for pat in [r'EXPERTS', r'audited by', r'independent registered public accounting firm']:
+            m = re.search(pat, text, re.IGNORECASE)
+            if m:
+                start = max(0, m.start() - 300)
+                auditor_snippets.append(text[start:start + 5000])
+                break
+    auditor_section = "\n\n---\n\n".join(auditor_snippets)
     tail = text[-8000:]
     excerpt = text[:15000] + "\n\n[...]\n\n" + auditor_section + "\n\n[end of doc]\n\n" + tail
 
@@ -156,6 +161,7 @@ def extract_from_424b4(url: str) -> dict:
         '  "securities_type": "Units - Shares and Warrants",\n'
         '  "auditor": "Audit firm name",\n'
         '  "auditor_since": 2021,\n'
+        '  "audit_report_date": "February 15, 2024",\n'
         '  "overallotment_option": 1875000,\n'
         '  "underwriters": ["Lead Underwriter", "Co-Underwriter"],\n'
         '  "warrant_count": 0.5,\n'
@@ -169,7 +175,8 @@ def extract_from_424b4(url: str) -> dict:
         "- rights_count: find the phrase 'one right to receive [fraction] of one share' and convert the fraction directly to a decimal - 'one-fifth' = 0.2, 'one-half' = 0.5, 'one-tenth' = 0.1, 'one' (whole share) = 1.0. Do NOT derive this by dividing - read the fraction as stated. null if no rights.\n"
         "- warrant_strike_price is the exercise price in dollars, null if not applicable\n"
         '- auditor: find the "/s/ Firm Name" signature line near the end of the "REPORT OF INDEPENDENT REGISTERED PUBLIC ACCOUNTING FIRM" section; the firm name repeats on the next line and may be followed by a website URL - ignore the URL, use only the firm name exactly as written after "/s/" (e.g. "MaloneBailey, LLP", "Marcum llp", "WithumSmith+Brown, PC")\n'
-        "- auditor_since: find the phrase 'We have served as the Company\\'s auditor since YYYY' and extract YYYY as an integer - this phrase appears right after the /s/ signature line; ignore any other years (report dates, city dates) nearby; null if not found\n"
+        "- auditor_since: find the exact phrase 'We have served as the Company\\'s auditor since YYYY' and extract YYYY as an integer; ignore every other year in the document including the report date and city date lines; null if not found\n"
+        '- audit_report_date: the date formatted as "Month DD, YYYY" that appears on the line immediately before or after the "/s/ Firm Name" signature in the audit report — this is the date the auditors signed, NOT the prospectus date or IPO date; null if not found\n'
         "- overallotment_option: integer share/unit count the underwriters have the option to purchase - null if not found\n"
         "- underwriters: lead underwriter first, null if not found\n\n"
         "Filing text:\n"
@@ -198,17 +205,23 @@ def extract_from_424b4(url: str) -> dict:
         raw = re.sub(r"\s*```$", "", raw.strip())
     try:
         result = json.loads(raw)
-        if (not result.get("auditor") or not result.get("auditor_since")) and auditor_section:
+        needs_fallback = (
+            not result.get("auditor") or
+            not result.get("auditor_since") or
+            not result.get("audit_report_date")
+        )
+        if needs_fallback and auditor_section:
             aud_prompt = (
-                "Extract auditor info from this SEC audit report. Return ONLY a JSON object:\n"
-                '{"auditor": "Firm Name", "auditor_since": 2024}\n\n'
-                "- auditor: firm name from the '/s/ Firm Name' signature line at the end\n"
-                "- auditor_since: integer year from 'We have served as the Company\\'s auditor since YYYY'\n\n"
+                "Extract auditor info from this SEC audit report section. Return ONLY a JSON object:\n"
+                '{"auditor": "Firm Name", "auditor_since": 2024, "audit_report_date": "February 15, 2024"}\n\n'
+                "- auditor: firm name from the '/s/ Firm Name' signature line\n"
+                "- auditor_since: integer year from 'We have served as the Company\\'s auditor since YYYY'; ignore report dates and city dates\n"
+                '- audit_report_date: "Month DD, YYYY" date on the line just before or after the /s/ signature; null if not found\n\n'
                 "Audit report:\n" + auditor_section[-3000:]
             )
             aud_msg = anthropic_client().messages.create(
                 model="claude-haiku-4-5-20251001",
-                max_tokens=100,
+                max_tokens=150,
                 system=[{"type": "text", "text": "Return only valid JSON, no markdown, no explanation."}],
                 messages=[{"role": "user", "content": aud_prompt}],
             )
@@ -221,6 +234,8 @@ def extract_from_424b4(url: str) -> dict:
                         result["auditor"] = aud.get("auditor")
                     if not result.get("auditor_since"):
                         result["auditor_since"] = aud.get("auditor_since")
+                    if not result.get("audit_report_date"):
+                        result["audit_report_date"] = aud.get("audit_report_date")
                 except json.JSONDecodeError:
                     pass
         return result
@@ -495,6 +510,7 @@ if not df.empty:
                     "Exchange":             row.get("exchange"),
                     "Auditor":              row.get("auditor"),
                     "Auditor Since":        row.get("auditor_since"),
+                    "Audit Report Date":    row.get("audit_report_date"),
                     "Audit Partner ID":     row.get("audit_partner_id"),
                     "Effective Date":       row.get("effective_date"),
                     "IPO Date":             row.get("ipo_date"),
@@ -619,6 +635,7 @@ if st.session_state.is_admin:
                 a_auditor_sel = st.selectbox("Auditor", _aud_opts, index=_aud_idx)
                 a_auditor_new = st.text_input("New auditor name", value=pf_auditor if pf_auditor not in _known_aud else "", placeholder="Type if not listed above")
                 a_auditor_since     = st.text_input("Auditor Since", value=str(pf.get("auditor_since", "")) if pf.get("auditor_since") else "")
+                a_audit_report_date = st.text_input("Audit Report Date", value=pf.get("audit_report_date") or "")
                 a_audit_partner_id  = st.text_input("Audit Partner ID")
                 a_image             = st.text_input("Image URL")
 
@@ -740,6 +757,7 @@ if st.session_state.is_admin:
                         "exchange":               a_exchange or None,
                         "auditor":                resolve_pick(a_auditor_sel, a_auditor_new) or None,
                         "auditor_since":          a_auditor_since or None,
+                        "audit_report_date":      a_audit_report_date or None,
                         "audit_partner_id":       a_audit_partner_id or None,
                         "effective_date":         a_effective if a_effective else None,
                         "ipo_date":               a_ipo.isoformat() if a_ipo else None,
@@ -822,8 +840,9 @@ if st.session_state.is_admin:
                         _aud_idx       = _aud_opts_e.index(_existing_aud) if _existing_aud in _known_aud_e else (len(_aud_opts_e) - 1 if _existing_aud else 0)
                         e_auditor_sel  = st.selectbox("Auditor", _aud_opts_e, index=_aud_idx)
                         e_auditor_new  = st.text_input("New auditor name", value=_existing_aud if _existing_aud not in _known_aud_e else "", placeholder="Type if not listed above")
-                        e_auditor_since    = st.text_input("Auditor Since", value=r.get("auditor_since") or "")
-                        e_audit_partner_id = st.text_input("Audit Partner ID", value=r.get("audit_partner_id") or "")
+                        e_auditor_since     = st.text_input("Auditor Since", value=r.get("auditor_since") or "")
+                        e_audit_report_date = st.text_input("Audit Report Date", value=r.get("audit_report_date") or "")
+                        e_audit_partner_id  = st.text_input("Audit Partner ID", value=r.get("audit_partner_id") or "")
                         e_image            = st.text_input("Image URL", value=r.get("image_url") or "")
 
                     with ec2:
@@ -932,6 +951,7 @@ if st.session_state.is_admin:
                             "exchange":               e_exchange or None,
                             "auditor":                resolve_pick(e_auditor_sel, e_auditor_new) or None,
                             "auditor_since":          e_auditor_since or None,
+                            "audit_report_date":      e_audit_report_date or None,
                             "audit_partner_id":       e_audit_partner_id or None,
                             "effective_date":         e_effective.isoformat() if e_effective else None,
                             "ipo_date":               e_ipo.isoformat() if e_ipo else None,
