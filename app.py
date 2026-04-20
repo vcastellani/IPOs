@@ -669,6 +669,8 @@ if st.session_state.is_admin:
                                     for k, v in k8_data.items():
                                         if v is not None and not data.get(k):
                                             data[k] = v
+                                    if data.get("overallotment_exercised") and not data.get("overallotment_exercised_date"):
+                                        data["overallotment_exercised_date"] = data.get("ipo_date")
                                 except Exception:
                                     pass
                             data["cik"] = f"{int(pf_cik):010d}"
