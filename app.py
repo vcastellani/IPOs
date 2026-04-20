@@ -292,6 +292,72 @@ def find_edgar_urls(cik: str, effect_date: str) -> dict:
         raise ValueError(f"No 424B4 or 424B3 found for CIK {cik} within 3 days before / 21 days after {effect_date}")
     return {"prospectus_url": prospectus_url, "s1_url": s1_url, "ipo_8k_url": ipo_8k_url}
 
+def extract_from_8k(url: str) -> dict:
+    resp = requests.get(
+        url,
+        headers={"User-Agent": "SPACTracker/1.0 research@example.com"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+
+    text = re.sub(r"<[^>]+>", " ", resp.text)
+    text = re.sub(r"https?://\S+|www\.\S+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    excerpt = text[:25000]
+
+    prompt = (
+        "Extract these fields from a SPAC IPO consummation 8-K filing (Items 1.01 and 3.02). Return ONLY a raw JSON object:\n\n"
+        "{\n"
+        '  "ipo_date": "2024-01-15",\n'
+        '  "ticker": "ACME",\n'
+        '  "exchange": "NASDAQ",\n'
+        '  "overallotment_exercised": 1875000,\n'
+        '  "overallotment_exercised_date": "2024-01-15",\n'
+        '  "pp_securities": 500000,\n'
+        '  "pp_securities_type": "Warrants",\n'
+        '  "pp_price": 1.00,\n'
+        '  "pp_securities_2": 12500,\n'
+        '  "pp_securities_type_2": "Units - Shares and Warrants",\n'
+        '  "pp_price_2": 10.00\n'
+        "}\n\n"
+        "Rules:\n"
+        '- ipo_date: date the IPO was consummated/closed in YYYY-MM-DD format; look for "consummated its Initial Public Offering" or "closing of the Initial Public Offering"; null if not found\n'
+        '- ticker: the common stock or unit ticker symbol listed on the exchange (e.g. "ACMEU"); null if not found\n'
+        '- exchange: must be exactly one of "NYSE", "NASDAQ", "AMEX"; null if not found\n'
+        '- overallotment_exercised: integer count of securities the underwriters purchased under the over-allotment/greenshoe option; null if not mentioned\n'
+        '- overallotment_exercised_date: YYYY-MM-DD date the over-allotment was exercised; null if not found\n'
+        '- pp_securities: integer count of the first private placement security sold simultaneously with the IPO (Item 3.02); null if not found\n'
+        '- pp_securities_type: type of first PP security, must be exactly one of: "Shares", "Warrants", "Units - Shares and Warrants", "Rights", "Units - Shares and Rights", "Units - Shares, Warrants, and Rights"; null if not found\n'
+        '- pp_price: price per unit/warrant/share of the first PP as a float; null if not found\n'
+        '- pp_securities_2: integer count of a second distinct private placement security if one exists; null if not found\n'
+        '- pp_securities_type_2: type of second PP security (same options); null if not found\n'
+        '- pp_price_2: price per unit of the second PP as a float; null if not found\n\n'
+        "Filing text:\n" + excerpt
+    )
+
+    msg = anthropic_client().messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=512,
+        system=[{
+            "type": "text",
+            "text": "You are a financial document parser for SEC filings. Output ONLY a raw JSON object. No explanation, no reasoning, no markdown, no prose — just the JSON object starting with { and ending with }.",
+            "cache_control": {"type": "ephemeral"},
+        }],
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw = msg.content[0].text.strip()
+    json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)?\}', raw, re.DOTALL)
+    if json_match:
+        raw = json_match.group(0)
+    elif raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw.strip())
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+
 def refresh():
     st.cache_data.clear()
 
@@ -588,6 +654,14 @@ if st.session_state.is_admin:
                             data["prospectus_url"] = pf_url
                             data["s1_url"] = urls.get("s1_url")
                             data["ipo_8k_url"] = urls.get("ipo_8k_url")
+                            if urls.get("ipo_8k_url"):
+                                try:
+                                    k8_data = extract_from_8k(urls["ipo_8k_url"])
+                                    for k, v in k8_data.items():
+                                        if v is not None and not data.get(k):
+                                            data[k] = v
+                                except Exception:
+                                    pass
                             data["cik"] = f"{int(pf_cik):010d}"
                             data["effective_date"] = pf_date.isoformat()
                             cik_int = int(pf_cik)
@@ -624,8 +698,8 @@ if st.session_state.is_admin:
                 a_name = st.text_input("Company Name *", value=pf.get("company_name", ""))
                 a_cik           = st.text_input("CIK", value=pf.get("cik", ""))
                 a_edgar_url     = st.text_input("EDGAR Homepage URL", value=pf.get("edgar_url", ""))
-                a_ticker        = st.text_input("Common Stock Ticker")
-                a_exchange      = st.selectbox("Exchange", EXCHANGES)
+                a_ticker        = st.text_input("Common Stock Ticker", value=pf.get("ticker") or "")
+                a_exchange      = st.selectbox("Exchange", EXCHANGES, index=_idx(EXCHANGES, pf.get("exchange") or ""))
                 _known_aud    = load_known_auditors()
                 _aud_opts     = [""] + _known_aud + ["Other / New..."]
                 pf_auditor_raw = pf.get("auditor") or ""
@@ -642,7 +716,8 @@ if st.session_state.is_admin:
             with c2:
                 st.markdown("**Dates & Pricing**")
                 a_effective = pf.get("effective_date")
-                a_ipo       = st.date_input("IPO Date", value=None)
+                _pf_ipo = pd.to_datetime(pf["ipo_date"]).date() if pf.get("ipo_date") else None
+                a_ipo       = st.date_input("IPO Date", value=_pf_ipo)
 
                 st.markdown("**Underwriters**")
                 _known_uws = load_known_underwriters()
@@ -712,24 +787,25 @@ if st.session_state.is_admin:
 
                 st.markdown("**Overallotment**")
                 a_oa_option         = st.number_input("Total Option (securities)", min_value=0, step=100_000, value=int(pf["overallotment_option"]) if pf.get("overallotment_option") else None)
-                a_oa_exercised      = st.number_input("Exercised (securities)", min_value=0, step=100_000, value=None)
-                a_oa_exercised_date = st.date_input("Exercise Date", value=None, key="add_oa_ex_date")
+                a_oa_exercised      = st.number_input("Exercised (securities)", min_value=0, step=100_000, value=int(pf["overallotment_exercised"]) if pf.get("overallotment_exercised") else None)
+                _pf_oa_date = pd.to_datetime(pf["overallotment_exercised_date"]).date() if pf.get("overallotment_exercised_date") else None
+                a_oa_exercised_date = st.date_input("Exercise Date", value=_pf_oa_date, key="add_oa_ex_date")
 
             st.markdown("**Private Placement**")
             pp1, pp2, pp3 = st.columns(3)
             with pp1:
-                a_pp_securities = st.number_input("PP Securities (1)", min_value=0, step=100_000, value=None)
+                a_pp_securities = st.number_input("PP Securities (1)", min_value=0, step=100_000, value=int(pf["pp_securities"]) if pf.get("pp_securities") else None)
             with pp2:
-                a_pp_sec_type = st.selectbox("PP Securities Type (1)", PP_SECURITY_TYPES)
+                a_pp_sec_type = st.selectbox("PP Securities Type (1)", PP_SECURITY_TYPES, index=_idx(PP_SECURITY_TYPES, pf.get("pp_securities_type") or ""))
             with pp3:
-                a_pp_price = st.number_input("PP Price (1) ($)", min_value=0.0, step=0.01, value=None)
+                a_pp_price = st.number_input("PP Price (1) ($)", min_value=0.0, step=0.01, value=float(pf["pp_price"]) if pf.get("pp_price") else None)
             pp4, pp5, pp6 = st.columns(3)
             with pp4:
-                a_pp_securities_2 = st.number_input("PP Securities (2)", min_value=0, step=100_000, value=None)
+                a_pp_securities_2 = st.number_input("PP Securities (2)", min_value=0, step=100_000, value=int(pf["pp_securities_2"]) if pf.get("pp_securities_2") else None)
             with pp5:
-                a_pp_sec_type_2 = st.selectbox("PP Securities Type (2)", PP_SECURITY_TYPES)
+                a_pp_sec_type_2 = st.selectbox("PP Securities Type (2)", PP_SECURITY_TYPES, index=_idx(PP_SECURITY_TYPES, pf.get("pp_securities_type_2") or ""))
             with pp6:
-                a_pp_price_2 = st.number_input("PP Price (2) ($)", min_value=0.0, step=0.01, value=None)
+                a_pp_price_2 = st.number_input("PP Price (2) ($)", min_value=0.0, step=0.01, value=float(pf["pp_price_2"]) if pf.get("pp_price_2") else None)
 
             st.markdown("**Other**")
             a_notes = st.text_area("Notes")
