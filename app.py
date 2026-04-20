@@ -689,13 +689,20 @@ if st.session_state.is_admin:
         pf_uws = pf.get("underwriters") or []
 
         if pf.get("prospectus_url") or pf.get("ipo_8k_url"):
-            _btn_cols = st.columns(2)
-            with _btn_cols[0]:
-                if pf.get("prospectus_url"):
-                    st.link_button("424B4 Prospectus: Click Here ->", pf["prospectus_url"], use_container_width=True)
-            with _btn_cols[1]:
-                if pf.get("ipo_8k_url"):
-                    st.link_button("IPO 8-K Filing: Click Here ->", pf["ipo_8k_url"], use_container_width=True)
+            _open_calls = " ".join(
+                f"window.open({json.dumps(u)}, '_blank');"
+                for u in [pf.get("prospectus_url"), pf.get("ipo_8k_url")]
+                if u
+            )
+            st.components.v1.html(
+                f"""<button onclick="{_open_calls}" style="
+                    background:#FF4B4B;color:white;border:none;border-radius:6px;
+                    padding:10px 20px;font-size:15px;font-weight:600;cursor:pointer;
+                    font-family:sans-serif;width:100%;">
+                    Click Here &#8594; &#128196;
+                </button>""",
+                height=50,
+            )
 
         st.divider()
 
