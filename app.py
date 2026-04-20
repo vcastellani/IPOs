@@ -115,6 +115,60 @@ def load_known_underwriters() -> list[str]:
             all_uws.extend(val)
     return sorted(set(u for u in all_uws if u and u.strip()))
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def load_pcaob_form_ap() -> pd.DataFrame:
+    r = requests.get(
+        "https://pcaobus.org/assets/PCAOBFiles/FirmFilings.zip",
+        headers={"User-Agent": "SPACTracker/1.0 research@example.com"},
+        timeout=120,
+    )
+    r.raise_for_status()
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        csv_name = max(zf.namelist(), key=lambda n: zf.getinfo(n).file_size)
+        with zf.open(csv_name) as f:
+            df = pd.read_csv(f, dtype=str)
+    df.columns = [c.strip() for c in df.columns]
+    return df
+
+def lookup_audit_partner(cik: str, audit_report_date: str) -> str | None:
+    from datetime import datetime as _dt
+    try:
+        df = load_pcaob_form_ap()
+        cik_padded = f"{int(cik):010d}"
+        subset = df[df.get("Issuer CIK", pd.Series(dtype=str)).str.strip() == cik_padded]
+        if subset.empty:
+            subset = df[df.get("Issuer CIK", pd.Series(dtype=str)).str.strip().str.lstrip("0") == str(int(cik))]
+        if subset.empty or "Audit Report Date" not in subset.columns:
+            return None
+        target = None
+        for fmt in ("%B %d, %Y", "%b %d, %Y", "%Y-%m-%d", "%m/%d/%Y"):
+            try:
+                target = _dt.strptime(audit_report_date.strip(), fmt).date()
+                break
+            except ValueError:
+                continue
+        if target is None:
+            return None
+        def _parse_date(s):
+            for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%B %d, %Y", "%b %d, %Y"):
+                try:
+                    return _dt.strptime(str(s).strip(), fmt).date()
+                except ValueError:
+                    continue
+            return None
+        subset = subset.copy()
+        subset["_date"] = subset["Audit Report Date"].apply(_parse_date)
+        match = subset[subset["_date"] == target]
+        if match.empty:
+            fallback = subset.dropna(subset=["_date"])
+            if fallback.empty:
+                return None
+            match = fallback.iloc[(fallback["_date"].apply(lambda d: abs((d - target).days))).argsort()[:1]]
+        pid = match.iloc[0].get("Engagement Partner ID")
+        return str(pid).strip() if pd.notna(pid) and str(pid).strip() else None
+    except Exception:
+        return None
+
 @st.cache_resource
 def anthropic_client():
     return anthropic.Anthropic(api_key=st.secrets.get("anthropic_api_key", ""))
@@ -677,6 +731,9 @@ if st.session_state.is_admin:
                             data["effective_date"] = pf_date.isoformat()
                             cik_int = int(pf_cik)
                             data["edgar_url"] = f"https://www.sec.gov/edgar/browse/?CIK={cik_int:010d}"
+                            if data.get("audit_report_date") and not data.get("audit_partner_id"):
+                                with st.spinner("Looking up PCAOB audit partner…"):
+                                    data["audit_partner_id"] = lookup_audit_partner(pf_cik, data["audit_report_date"])
                             st.session_state.prefill_424b4 = data
                             if data.get("securities_type") in SECURITY_TYPES:
                                 st.session_state["prefill_sec_type_pending"] = data["securities_type"]
