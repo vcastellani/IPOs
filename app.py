@@ -175,7 +175,7 @@ def lookup_audit_partner(cik: str, audit_report_date: str) -> tuple[str | None, 
             return None, f"Could not parse audit_report_date: {audit_report_date!r}"
 
         def _parse_date(s):
-            for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%B %d, %Y", "%b %d, %Y"):
+            for fmt in ("%m/%d/%Y %I:%M:%S %p", "%Y-%m-%d", "%m/%d/%Y", "%B %d, %Y", "%b %d, %Y"):
                 try:
                     return _dt.strptime(str(s).strip(), fmt).date()
                 except ValueError:
