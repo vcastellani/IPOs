@@ -136,6 +136,11 @@ def lookup_audit_partner(cik: str, audit_report_date: str) -> tuple[str | None, 
     try:
         df = load_pcaob_form_ap()
 
+        # Filter to standard issuer audits only
+        type_col = next((c for c in df.columns if "audit report type" in c.lower()), None)
+        if type_col:
+            df = df[df[type_col].str.strip() == "Issuer, other than Employee Benefit Plan or Investment Company"]
+
         # Locate the CIK column case-insensitively
         cik_col = next((c for c in df.columns if c.lower().replace(" ", "") == "issuercik"), None)
         if cik_col is None:
