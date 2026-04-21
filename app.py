@@ -183,7 +183,8 @@ def lookup_audit_partner(cik: str, audit_report_date: str) -> tuple[str | None, 
         if match.empty:
             fallback = subset[subset["_date"].notna()]
             if fallback.empty:
-                return None, f"Found {len(subset)} rows for CIK but none had a parseable date"
+                sample_dates = subset[date_col].dropna().head(3).tolist()
+                return None, f"Found {len(subset)} rows for CIK but none had a parseable date. Raw date samples: {sample_dates}"
             match = fallback.iloc[(fallback["_date"].apply(lambda d: abs((d - target).days))).argsort()[:1]]
 
         pid = match.iloc[0].get(pid_col)
