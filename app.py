@@ -136,6 +136,11 @@ def lookup_audit_partner(cik: str, audit_report_date: str) -> tuple[str | None, 
     try:
         df = load_pcaob_form_ap()
 
+        # Filter to standard issuer audits only
+        type_col = next((c for c in df.columns if "audit report type" in c.lower()), None)
+        if type_col:
+            df = df[df[type_col].str.strip() == "Issuer, other than Employee Benefit Plan or Investment Company"]
+
         # Locate the CIK column case-insensitively
         cik_col = next((c for c in df.columns if c.lower().replace(" ", "") == "issuercik"), None)
         if cik_col is None:
@@ -183,7 +188,8 @@ def lookup_audit_partner(cik: str, audit_report_date: str) -> tuple[str | None, 
         if match.empty:
             fallback = subset[subset["_date"].notna()]
             if fallback.empty:
-                return None, f"Found {len(subset)} rows for CIK but none had a parseable date"
+                sample_dates = subset[date_col].dropna().head(3).tolist()
+                return None, f"Found {len(subset)} rows for CIK but none had a parseable date. Raw date samples: {sample_dates}"
             match = fallback.iloc[(fallback["_date"].apply(lambda d: abs((d - target).days))).argsort()[:1]]
 
         pid = match.iloc[0].get(pid_col)
