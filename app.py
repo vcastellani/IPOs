@@ -126,20 +126,39 @@ def load_pcaob_form_ap() -> pd.DataFrame:
     with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
         csv_name = max(zf.namelist(), key=lambda n: zf.getinfo(n).file_size)
         with zf.open(csv_name) as f:
-            df = pd.read_csv(f, dtype=str)
+            df = pd.read_csv(f, dtype=str, encoding="utf-8-sig")
     df.columns = [c.strip() for c in df.columns]
     return df
 
-def lookup_audit_partner(cik: str, audit_report_date: str) -> str | None:
+def lookup_audit_partner(cik: str, audit_report_date: str) -> tuple[str | None, str | None]:
+    """Returns (partner_id, debug_message)."""
     from datetime import datetime as _dt
     try:
         df = load_pcaob_form_ap()
+
+        # Locate the CIK column case-insensitively
+        cik_col = next((c for c in df.columns if c.lower().replace(" ", "") == "issuercik"), None)
+        if cik_col is None:
+            return None, f"CIK column not found. Columns: {list(df.columns)[:8]}"
+
         cik_padded = f"{int(cik):010d}"
-        subset = df[df.get("Issuer CIK", pd.Series(dtype=str)).str.strip() == cik_padded]
+        cik_plain  = str(int(cik))
+        subset = df[df[cik_col].str.strip() == cik_padded]
         if subset.empty:
-            subset = df[df.get("Issuer CIK", pd.Series(dtype=str)).str.strip().str.lstrip("0") == str(int(cik))]
-        if subset.empty or "Audit Report Date" not in subset.columns:
-            return None
+            subset = df[df[cik_col].str.strip().str.lstrip("0") == cik_plain]
+        if subset.empty:
+            return None, f"No Form AP rows found for CIK {cik_padded}"
+
+        # Locate the audit report date column case-insensitively
+        date_col = next((c for c in df.columns if "audit report date" in c.lower()), None)
+        if date_col is None:
+            return None, f"Audit Report Date column not found. Columns: {list(df.columns)[:8]}"
+
+        # Locate the partner ID column
+        pid_col = next((c for c in df.columns if "engagement partner id" in c.lower()), None)
+        if pid_col is None:
+            return None, "Engagement Partner ID column not found"
+
         target = None
         for fmt in ("%B %d, %Y", "%b %d, %Y", "%Y-%m-%d", "%m/%d/%Y"):
             try:
@@ -148,7 +167,8 @@ def lookup_audit_partner(cik: str, audit_report_date: str) -> str | None:
             except ValueError:
                 continue
         if target is None:
-            return None
+            return None, f"Could not parse audit_report_date: {audit_report_date!r}"
+
         def _parse_date(s):
             for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%B %d, %Y", "%b %d, %Y"):
                 try:
@@ -156,18 +176,22 @@ def lookup_audit_partner(cik: str, audit_report_date: str) -> str | None:
                 except ValueError:
                     continue
             return None
+
         subset = subset.copy()
-        subset["_date"] = subset["Audit Report Date"].apply(_parse_date)
+        subset["_date"] = subset[date_col].apply(_parse_date)
         match = subset[subset["_date"] == target]
         if match.empty:
-            fallback = subset.dropna(subset=["_date"])
+            fallback = subset[subset["_date"].notna()]
             if fallback.empty:
-                return None
+                return None, f"Found {len(subset)} rows for CIK but none had a parseable date"
             match = fallback.iloc[(fallback["_date"].apply(lambda d: abs((d - target).days))).argsort()[:1]]
-        pid = match.iloc[0].get("Engagement Partner ID")
-        return str(pid).strip() if pd.notna(pid) and str(pid).strip() else None
-    except Exception:
-        return None
+
+        pid = match.iloc[0].get(pid_col)
+        if pd.notna(pid) and str(pid).strip():
+            return str(pid).strip(), f"Found partner ID {pid} (date matched)"
+        return None, "Row found but Engagement Partner ID was blank"
+    except Exception as e:
+        return None, f"Error: {e}"
 
 @st.cache_resource
 def anthropic_client():
@@ -733,7 +757,9 @@ if st.session_state.is_admin:
                             data["edgar_url"] = f"https://www.sec.gov/edgar/browse/?CIK={cik_int:010d}"
                             if data.get("audit_report_date") and not data.get("audit_partner_id"):
                                 with st.spinner("Looking up PCAOB audit partner…"):
-                                    data["audit_partner_id"] = lookup_audit_partner(pf_cik, data["audit_report_date"])
+                                    _pid, _dbg = lookup_audit_partner(pf_cik, data["audit_report_date"])
+                                    data["audit_partner_id"] = _pid
+                                    data["_pcaob_debug"] = _dbg
                             st.session_state.prefill_424b4 = data
                             if data.get("securities_type") in SECURITY_TYPES:
                                 st.session_state["prefill_sec_type_pending"] = data["securities_type"]
@@ -746,6 +772,12 @@ if st.session_state.is_admin:
 
         pf = st.session_state.get("prefill_424b4", {})
         pf_uws = pf.get("underwriters") or []
+
+        if pf.get("_pcaob_debug"):
+            if pf.get("audit_partner_id"):
+                st.caption(f"PCAOB: {pf['_pcaob_debug']}")
+            else:
+                st.warning(f"PCAOB partner lookup: {pf['_pcaob_debug']}")
 
         _btn_cols = st.columns(2)
         with _btn_cols[0]:
