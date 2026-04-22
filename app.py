@@ -455,6 +455,90 @@ def extract_from_8k(url: str) -> dict:
     except json.JSONDecodeError:
         return {}
 
+def extract_from_10k(url: str) -> dict:
+    """Extract key IPO/PP verification fields from a 10-K primary document."""
+    resp = requests.get(
+        url,
+        headers={"User-Agent": "SPACTracker/1.0 research@example.com"},
+        timeout=60,
+    )
+    resp.raise_for_status()
+
+    text = re.sub(r"<[^>]+>", " ", resp.text)
+    text = re.sub(r"https?://\S+|www\.\S+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    lower = text.lower()
+    idx = lower.find("initial public offering and private placement")
+    if idx == -1:
+        idx = lower.find("initial public offering")
+    excerpt = text[max(0, idx - 100): idx + 8000] if idx != -1 else text[:12000]
+
+    prompt = (
+        "Extract these fields from the 'Initial Public Offering and Private Placement' section of a SPAC 10-K annual report. "
+        "Return ONLY a raw JSON object:\n\n"
+        "{\n"
+        '  "ipo_date": "2024-07-03",\n'
+        '  "offer_price": 10.00,\n'
+        '  "securities_offered": 5000000,\n'
+        '  "overallotment_exercised": 750000,\n'
+        '  "overallotment_exercised_date": "2024-07-08",\n'
+        '  "pp_securities": 228000,\n'
+        '  "pp_securities_type": "Units - Shares and Rights",\n'
+        '  "pp_price": 10.00,\n'
+        '  "pp_securities_2": null,\n'
+        '  "pp_securities_type_2": null,\n'
+        '  "pp_price_2": null,\n'
+        '  "ticker": "EURK",\n'
+        '  "ticker_units": "EURKU",\n'
+        '  "ticker_warrants": null,\n'
+        '  "ticker_rights": "EURKR",\n'
+        '  "exchange": "NASDAQ"\n'
+        "}\n\n"
+        "Rules:\n"
+        '- ipo_date: date the IPO was consummated/closed in YYYY-MM-DD format\n'
+        '- offer_price: price per unit/share in the IPO as a float (e.g., 10.00)\n'
+        '- securities_offered: integer count of units/shares sold in the BASE IPO (excluding over-allotment)\n'
+        '- overallotment_exercised: integer count of additional securities sold under the over-allotment option; null if not exercised\n'
+        '- overallotment_exercised_date: YYYY-MM-DD date the over-allotment units were actually sold; null if not exercised\n'
+        '- pp_securities: TOTAL integer count of ALL private placement securities of the FIRST type (combine initial + any OA-related PP of the same type)\n'
+        '- pp_securities_type: type of first PP security, exactly one of: "Shares", "Warrants", "Units - Shares and Warrants", "Units - Shares and Rights", "Units - Shares, Warrants, and Rights"; null if not found\n'
+        '- pp_price: price per security of the first PP as a float\n'
+        '- pp_securities_2: TOTAL count of a second distinct PP security type if one exists; null if none\n'
+        '- pp_securities_type_2: type of second PP security (same options); null if none\n'
+        '- pp_price_2: price per security of the second PP; null if none\n'
+        '- ticker: common stock ticker (no suffix, e.g. "EURK"); null if only units trade separately\n'
+        '- ticker_units: units ticker (typically ends in "U", e.g. "EURKU"); null if not listed\n'
+        '- ticker_warrants: warrant ticker (typically ends in "W" or "WS"); null if no warrants\n'
+        '- ticker_rights: rights ticker (typically ends in "R"); null if no rights\n'
+        '- exchange: exactly one of "NYSE", "NASDAQ", "AMEX"; null if not found\n\n'
+        "Filing text:\n" + excerpt
+    )
+
+    msg = anthropic_client().messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=600,
+        system=[{
+            "type": "text",
+            "text": "You are a financial document parser for SEC filings. Output ONLY a raw JSON object. No explanation, no reasoning, no markdown, no prose — just the JSON object starting with { and ending with }.",
+            "cache_control": {"type": "ephemeral"},
+        }],
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw = msg.content[0].text.strip()
+    json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)?\}', raw, re.DOTALL)
+    if json_match:
+        raw = json_match.group(0)
+    elif raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw.strip())
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+
+
 def refresh():
     st.cache_data.clear()
 
@@ -584,19 +668,21 @@ if not df.empty:
         / 1_000_000
     ).round(1)
 
-    display_cols = [c for c in ["company_name", "prospectus_url", "cik", "ticker", "size_m"] if c in df.columns]
+    display_cols = [c for c in ["company_name", "prospectus_url", "cik", "ticker", "size_m", "verified"] if c in df.columns]
 
+    col_cfg = {
+        "company_name":   st.column_config.TextColumn("Company"),
+        "prospectus_url": st.column_config.LinkColumn("Prospectus", display_text="📄"),
+        "cik":            st.column_config.TextColumn("CIK"),
+        "ticker":         st.column_config.TextColumn("Ticker"),
+        "size_m":         st.column_config.NumberColumn("Size ($M)", format="$ %.1f"),
+        "verified":       st.column_config.CheckboxColumn("Verified", disabled=True),
+    }
     st.dataframe(
         df[display_cols],
         use_container_width=True,
         hide_index=True,
-        column_config={
-            "company_name":   st.column_config.TextColumn("Company"),
-            "prospectus_url": st.column_config.LinkColumn("Prospectus", display_text="📄"),
-            "cik":            st.column_config.TextColumn("CIK"),
-            "ticker":         st.column_config.TextColumn("Ticker"),
-            "size_m":         st.column_config.NumberColumn("Size ($M)", format="$ %.1f"),
-        },
+        column_config=col_cfg,
     )
     st.caption(f"{len(df)} filing(s) shown")
 
@@ -652,6 +738,8 @@ if not df.empty:
         chosen = st.selectbox("Select a company", names, key="detail_select")
         if chosen:
             row = df[df["company_name"] == chosen].iloc[0]
+            if row.get("verified"):
+                st.success("✅ Verified")
             col_info, col_img = st.columns([3, 1])
             with col_info:
                 oa_date_str = None
@@ -720,7 +808,7 @@ if not df.empty:
 if st.session_state.is_admin:
     st.divider()
     st.subheader("Admin Panel")
-    tab_add, tab_edit = st.tabs(["Add New Entry", "Edit / Delete"])
+    tab_add, tab_edit, tab_verify = st.tabs(["Add New Entry", "Edit / Delete", "Verify 10-K"])
 
     # ── Add ───────────────────────────────────────────────────────────────────
     with tab_add:
@@ -1243,6 +1331,131 @@ if st.session_state.is_admin:
                         st.rerun()
                     else:
                         st.error("URL is required.")
+
+    # ── Verify 10-K ──────────────────────────────────────────────────────────
+    # NOTE: requires a 'verified' boolean column (default false) in the ipos table
+    with tab_verify:
+        full_df_v = load_ipos()
+
+        def _has_tenk(filings_val):
+            if not filings_val:
+                return False
+            return any(isinstance(f, dict) and f.get("type") == "10-K" for f in filings_val)
+
+        df_with_tenk = full_df_v[full_df_v["filings"].apply(_has_tenk)]
+
+        if df_with_tenk.empty:
+            st.info("No records with 10-K filings yet. Run 'Find & Extract' on a SPAC that has filed a 10-K.")
+        else:
+            v_options = {
+                f"{r['company_name']}  (ID {r['id']})": r["id"]
+                for _, r in df_with_tenk.sort_values("company_name").iterrows()
+            }
+            v_sel_label = st.selectbox("Select company", list(v_options.keys()), key="verify_select")
+            v_id = v_options[v_sel_label]
+            v_row = full_df_v[full_df_v["id"] == v_id].iloc[0]
+
+            v_tenk_filings = [f for f in (v_row.get("filings") or []) if isinstance(f, dict) and f.get("type") == "10-K"]
+            v_tenk_opts = {f"{f.get('desc', str(i+1))} 10-K": f["url"] for i, f in enumerate(v_tenk_filings)}
+
+            v_tenk_label = st.selectbox("Select 10-K filing", list(v_tenk_opts.keys()), key="verify_tenk_select")
+            v_tenk_url = v_tenk_opts[v_tenk_label]
+
+            is_verified = bool(v_row.get("verified"))
+            if is_verified:
+                st.success("✅ This record is already marked as verified.")
+
+            vcol1, vcol2 = st.columns(2)
+            with vcol1:
+                run_verify = st.button("Run 10-K Verification", key="run_verify_btn", use_container_width=True)
+            with vcol2:
+                mark_verified = st.button(
+                    "✅ Mark as Verified",
+                    key="mark_verified_btn",
+                    type="primary",
+                    disabled=is_verified,
+                    use_container_width=True,
+                )
+
+            if mark_verified and not is_verified:
+                try:
+                    service_client().table("ipos").update({"verified": True}).eq("id", v_id).execute()
+                    st.success(f"Marked {v_row['company_name']} as verified!")
+                    refresh()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Could not save: {e}\n\nEnsure a 'verified' boolean column exists in the ipos table.")
+
+            if run_verify:
+                with st.spinner(f"Extracting from {v_tenk_label}…"):
+                    _extracted = extract_from_10k(v_tenk_url)
+                st.session_state["verify_result"] = (v_id, v_tenk_label, _extracted)
+
+            if "verify_result" in st.session_state:
+                _vid, _vlabel, _ext = st.session_state["verify_result"]
+                if _vid == v_id and _vlabel == v_tenk_label:
+                    if not _ext:
+                        st.error("Could not extract data — the 10-K may lack a structured IPO/PP section.")
+                    else:
+                        st.markdown(f"#### Stored vs. {_vlabel}")
+
+                        def _fmt_v(v):
+                            if v is None or (isinstance(v, float) and pd.isna(v)):
+                                return "—"
+                            return str(v)
+
+                        def _cmp(stored, extr):
+                            if (stored is None or stored == "" or (isinstance(stored, float) and pd.isna(stored))) and \
+                               (extr is None or extr == ""):
+                                return "—"
+                            if stored is None or extr is None:
+                                return "⚠️"
+                            try:
+                                s, e = float(stored), float(extr)
+                                return "✅" if abs(s - e) / max(abs(s), 1) < 0.01 else "❌"
+                            except (ValueError, TypeError):
+                                pass
+                            try:
+                                s_d = pd.to_datetime(str(stored)).date()
+                                e_d = pd.to_datetime(str(extr)).date()
+                                return "✅" if s_d == e_d else "❌"
+                            except Exception:
+                                pass
+                            return "✅" if str(stored).strip().lower() == str(extr).strip().lower() else "❌"
+
+                        comparisons = [
+                            ("IPO Date",             v_row.get("ipo_date"),                    _ext.get("ipo_date")),
+                            ("Offer Price ($)",       v_row.get("offer_price"),                 _ext.get("offer_price")),
+                            ("Securities Offered",    v_row.get("securities_offered"),          _ext.get("securities_offered")),
+                            ("OA Exercised",          v_row.get("overallotment_exercised"),     _ext.get("overallotment_exercised")),
+                            ("OA Exercised Date",     v_row.get("overallotment_exercised_date"),_ext.get("overallotment_exercised_date")),
+                            ("PP Securities (1)",     v_row.get("pp_securities"),               _ext.get("pp_securities")),
+                            ("PP Type (1)",           v_row.get("pp_securities_type"),          _ext.get("pp_securities_type")),
+                            ("PP Price (1) ($)",      v_row.get("pp_price"),                    _ext.get("pp_price")),
+                            ("PP Securities (2)",     v_row.get("pp_securities_2"),             _ext.get("pp_securities_2")),
+                            ("PP Type (2)",           v_row.get("pp_securities_type_2"),        _ext.get("pp_securities_type_2")),
+                            ("PP Price (2) ($)",      v_row.get("pp_price_2"),                  _ext.get("pp_price_2")),
+                            ("Ticker",                v_row.get("ticker"),                      _ext.get("ticker")),
+                            ("Units Ticker",          v_row.get("ticker_units"),                _ext.get("ticker_units")),
+                            ("Warrant Ticker",        v_row.get("ticker_warrants"),             _ext.get("ticker_warrants")),
+                            ("Rights Ticker",         v_row.get("ticker_rights"),               _ext.get("ticker_rights")),
+                            ("Exchange",              v_row.get("exchange"),                    _ext.get("exchange")),
+                        ]
+
+                        mismatches = 0
+                        cmp_rows = []
+                        for field, sv, ev in comparisons:
+                            icon = _cmp(sv, ev)
+                            if icon == "❌":
+                                mismatches += 1
+                            cmp_rows.append({"": icon, "Field": field, "Stored": _fmt_v(sv), "Extracted from 10-K": _fmt_v(ev)})
+
+                        st.dataframe(pd.DataFrame(cmp_rows), hide_index=True, use_container_width=True)
+
+                        if mismatches == 0:
+                            st.success("All fields match — safe to mark as verified.")
+                        else:
+                            st.warning(f"{mismatches} field(s) differ. Review above before marking as verified.")
 
 # ── Watchlist ─────────────────────────────────────────────────────────────────
 
