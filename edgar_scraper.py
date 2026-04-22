@@ -285,7 +285,6 @@ def build_html_email(filings: list[dict], filing_date: date) -> str:
     count = len(filings)
 
     spacs = [f for f in filings if f["sic"] == "6770"]
-    others = [f for f in filings if f["sic"] != "6770"]
 
     def make_table(rows: list[dict], title: str, subtitle: str, show_pcaob: bool = False) -> str:
         if not rows:
@@ -298,25 +297,17 @@ def build_html_email(filings: list[dict], filing_date: date) -> str:
             + header + row_html + TABLE_FOOTER
         )
 
-    if not filings:
-        body = "<p style='color:#555;'>No EFFECT filings were found on EDGAR for this date.</p>"
+    if not spacs:
+        body = "<p style='color:#555;'>No SPAC EFFECT filings (SIC 6770) were found on EDGAR for this date.</p>"
     else:
-        body = (
-            make_table(
-                spacs,
-                "Special Purpose Acquisition Company (SPAC) Filings",
-                "Blank check companies — likely SPAC IPOs or follow-on SPAC registrations.",
-                show_pcaob=True,
-            )
-            + ("<div style='margin:24px 0;border-top:2px solid #eee;'></div>" if spacs and others else "")
-            + make_table(
-                others,
-                "All Other EFFECT Filings",
-                "IPOs, follow-on offerings, shelf registrations, mergers, and other registration types.",
-            )
+        body = make_table(
+            spacs,
+            "Special Purpose Acquisition Company (SPAC) Filings",
+            "Blank check companies (SIC 6770) — likely SPAC IPOs or follow-on SPAC registrations.",
+            show_pcaob=True,
         )
 
-    filing_count_label = str(count) + " EFFECT filing" + ("s" if count != 1 else "")
+    spac_count_label = str(len(spacs)) + " SPAC filing" + ("s" if len(spacs) != 1 else "")
 
     return (
         "<!DOCTYPE html><html><head><meta charset='UTF-8'></head>"
@@ -327,7 +318,7 @@ def build_html_email(filings: list[dict], filing_date: date) -> str:
         "<p style='margin:6px 0 0;opacity:0.85;font-size:14px;'>" + date_str + "</p>"
         "</div>"
         "<div style='padding:24px 32px;'>"
-        "<p style='color:#555;margin:0 0 8px;'><strong>" + filing_count_label + "</strong> found on EDGAR.</p>"
+        "<p style='color:#555;margin:0 0 8px;'><strong>" + spac_count_label + "</strong> found on EDGAR.</p>"
         + body +
         "</div>"
         "<div style='padding:16px 32px;background:#f4f5f7;font-size:12px;color:#888;'>"
@@ -389,8 +380,9 @@ def process_one_day(filing_date: date) -> None:
 
     filings.sort(key=lambda f: (CATEGORY_ORDER.get(f["category"], 99), f["company"]))
 
+    spac_count = sum(1 for f in filings if f["sic"] == "6770")
     date_label = filing_date.strftime("%Y-%m-%d")
-    subject = f"Filed Effective Forms on EDGAR — {date_label} ({len(filings)} filing{'s' if len(filings) != 1 else ''})"
+    subject = f"SPAC EFFECT Filings on EDGAR — {date_label} ({spac_count} SPAC{'s' if spac_count != 1 else ''})"
     html = build_html_email(filings, filing_date)
     send_email(subject, html)
     log.info("Email sent for %s.", filing_date)

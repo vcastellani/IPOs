@@ -521,13 +521,17 @@ def extract_from_10k(url: str) -> dict:
         '- overallotment_exercised_date: date OA units were sold in YYYY-MM-DD. '
         'If OA was exercised "simultaneously" or "concurrently" with the IPO closing, use the same date as ipo_date. '
         'If OA was exercised on a separate later date, use that date. Null if OA not exercised.\n'
-        '- pp_securities: TOTAL count of all private placement securities of the FIRST type. '
-        'Combine initial PP + any OA-related PP of the same security type.\n'
+        '- pp_securities: TOTAL count of all private placement securities of the FIRST type sold '
+        '"simultaneously with the closing" of the IPO (or simultaneously with the OA closing). '
+        'Combine any separate tranches of the same security type (initial + OA-related). '
+        'IMPORTANT: do NOT include founder shares / initial shares / insider shares / promoter shares '
+        'issued to initial shareholders before the IPO for nominal consideration (e.g. $25,000 for '
+        'millions of shares, or ~$0.003–$0.02 per share). Those are founder shares, not the private placement.\n'
         '- pp_securities_type: classify the first PP security as exactly one of: '
         '"Shares", "Warrants", "Units - Shares and Warrants", "Units - Shares and Rights", '
         '"Units - Shares, Warrants, and Rights". '
-        '"Private Placement Warrants" = "Warrants". "Private Placement Units" = match to the appropriate Units type.\n'
-        '- pp_price: price per security of the first PP as a float\n'
+        '"Private Placement Warrants" = "Warrants". "Private Units" = match to the appropriate Units type based on what each unit contains.\n'
+        '- pp_price: price per security of the first PP as a float (typically $10.00 per unit or $1.00–$1.50 per warrant)\n'
         '- pp_securities_2: TOTAL count of a second DISTINCT PP security type if one exists; null if none\n'
         '- pp_securities_type_2: type of second PP security (same options); null if none\n'
         '- pp_price_2: price per security of the second PP; null if none\n'
@@ -541,7 +545,7 @@ def extract_from_10k(url: str) -> dict:
 
     msg = anthropic_client().messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=600,
+        max_tokens=900,
         system=[{
             "type": "text",
             "text": "You are a financial document parser for SEC filings. Output ONLY a raw JSON object. No explanation, no reasoning, no markdown, no prose — just the JSON object starting with { and ending with }.",
@@ -551,7 +555,7 @@ def extract_from_10k(url: str) -> dict:
     )
 
     raw = msg.content[0].text.strip()
-    _debug_info["claude_raw"] = raw[:500]
+    _debug_info["claude_raw"] = raw[:600]
     json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)?\}', raw, re.DOTALL)
     if json_match:
         raw = json_match.group(0)
