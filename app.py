@@ -471,46 +471,61 @@ def extract_from_10k(url: str) -> dict:
     lower = text.lower()
     idx = lower.find("initial public offering and private placement")
     if idx == -1:
-        idx = lower.find("initial public offering")
-    excerpt = text[max(0, idx - 100): idx + 8000] if idx != -1 else text[:12000]
+        # Look for the standalone section heading, not inline mentions like "our initial public offering"
+        for pattern in ["initial public offering\n", "initial public offering "]:
+            i = lower.find(pattern)
+            if i != -1:
+                idx = i
+                break
+    if idx == -1:
+        idx = lower.find("consummated our initial public offering")
+    excerpt = text[max(0, idx - 100): idx + 10000] if idx != -1 else text[:12000]
 
     prompt = (
-        "Extract these fields from the 'Initial Public Offering and Private Placement' section of a SPAC 10-K annual report. "
+        "Extract these fields from the IPO section of a SPAC 10-K annual report. "
         "Return ONLY a raw JSON object:\n\n"
         "{\n"
         '  "ipo_date": "2024-07-03",\n'
         '  "offer_price": 10.00,\n'
-        '  "securities_offered": 5000000,\n'
-        '  "overallotment_exercised": 750000,\n'
-        '  "overallotment_exercised_date": "2024-07-08",\n'
-        '  "pp_securities": 228000,\n'
-        '  "pp_securities_type": "Units - Shares and Rights",\n'
-        '  "pp_price": 10.00,\n'
+        '  "securities_offered": 20000000,\n'
+        '  "overallotment_exercised": 3000000,\n'
+        '  "overallotment_exercised_date": "2024-07-03",\n'
+        '  "pp_securities": 6000000,\n'
+        '  "pp_securities_type": "Warrants",\n'
+        '  "pp_price": 1.00,\n'
         '  "pp_securities_2": null,\n'
         '  "pp_securities_type_2": null,\n'
         '  "pp_price_2": null,\n'
-        '  "ticker": "EURK",\n'
-        '  "ticker_units": "EURKU",\n'
-        '  "ticker_warrants": null,\n'
-        '  "ticker_rights": "EURKR",\n'
+        '  "ticker": "ACME",\n'
+        '  "ticker_units": "ACMEU",\n'
+        '  "ticker_warrants": "ACMEW",\n'
+        '  "ticker_rights": null,\n'
         '  "exchange": "NASDAQ"\n'
         "}\n\n"
         "Rules:\n"
         '- ipo_date: date the IPO was consummated/closed in YYYY-MM-DD format\n'
         '- offer_price: price per unit/share in the IPO as a float (e.g., 10.00)\n'
-        '- securities_offered: integer count of units/shares sold in the BASE IPO (excluding over-allotment)\n'
-        '- overallotment_exercised: integer count of additional securities sold under the over-allotment option; null if not exercised\n'
-        '- overallotment_exercised_date: YYYY-MM-DD date the over-allotment units were actually sold; null if not exercised\n'
-        '- pp_securities: TOTAL integer count of ALL private placement securities of the FIRST type (combine initial + any OA-related PP of the same type)\n'
-        '- pp_securities_type: type of first PP security, exactly one of: "Shares", "Warrants", "Units - Shares and Warrants", "Units - Shares and Rights", "Units - Shares, Warrants, and Rights"; null if not found\n'
+        '- securities_offered: BASE IPO count only (EXCLUDING over-allotment). '
+        'IMPORTANT: if text says "X Units, including Y Units for the over-allotment", base = X - Y. '
+        'If text says "X Units" with no mention of inclusion, use X as base.\n'
+        '- overallotment_exercised: integer count of over-allotment securities; null if OA was not exercised\n'
+        '- overallotment_exercised_date: date OA units were sold in YYYY-MM-DD. '
+        'If OA was exercised "simultaneously" or "concurrently" with the IPO closing, use the same date as ipo_date. '
+        'If OA was exercised on a separate later date, use that date. Null if OA not exercised.\n'
+        '- pp_securities: TOTAL count of all private placement securities of the FIRST type. '
+        'Combine initial PP + any OA-related PP of the same security type.\n'
+        '- pp_securities_type: classify the first PP security as exactly one of: '
+        '"Shares", "Warrants", "Units - Shares and Warrants", "Units - Shares and Rights", '
+        '"Units - Shares, Warrants, and Rights". '
+        '"Private Placement Warrants" = "Warrants". "Private Placement Units" = match to the appropriate Units type.\n'
         '- pp_price: price per security of the first PP as a float\n'
-        '- pp_securities_2: TOTAL count of a second distinct PP security type if one exists; null if none\n'
+        '- pp_securities_2: TOTAL count of a second DISTINCT PP security type if one exists; null if none\n'
         '- pp_securities_type_2: type of second PP security (same options); null if none\n'
         '- pp_price_2: price per security of the second PP; null if none\n'
-        '- ticker: common stock ticker (no suffix, e.g. "EURK"); null if only units trade separately\n'
-        '- ticker_units: units ticker (typically ends in "U", e.g. "EURKU"); null if not listed\n'
-        '- ticker_warrants: warrant ticker (typically ends in "W" or "WS"); null if no warrants\n'
-        '- ticker_rights: rights ticker (typically ends in "R"); null if no rights\n'
+        '- ticker: common stock ticker symbol (no suffix); null if only units are listed or tickers not mentioned\n'
+        '- ticker_units: units ticker (typically ends in "U"); null if not mentioned\n'
+        '- ticker_warrants: warrant ticker (typically ends in "W" or "WS"); null if no warrants or not mentioned\n'
+        '- ticker_rights: rights ticker (typically ends in "R"); null if no rights or not mentioned\n'
         '- exchange: exactly one of "NYSE", "NASDAQ", "AMEX"; null if not found\n\n'
         "Filing text:\n" + excerpt
     )
