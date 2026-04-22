@@ -765,7 +765,6 @@ if st.session_state.is_admin:
                                 with st.spinner("Looking up PCAOB audit partner…"):
                                     _pid, _dbg = lookup_audit_partner(pf_cik, data["audit_report_date"])
                                     data["audit_partner_id"] = _pid
-                                    data["_pcaob_debug"] = _dbg
                             st.session_state.prefill_424b4 = data
                             if data.get("securities_type") in SECURITY_TYPES:
                                 st.session_state["prefill_sec_type_pending"] = data["securities_type"]
@@ -778,12 +777,6 @@ if st.session_state.is_admin:
 
         pf = st.session_state.get("prefill_424b4", {})
         pf_uws = pf.get("underwriters") or []
-
-        if pf.get("_pcaob_debug"):
-            if pf.get("audit_partner_id"):
-                st.caption(f"PCAOB: {pf['_pcaob_debug']}")
-            else:
-                st.warning(f"PCAOB partner lookup: {pf['_pcaob_debug']}")
 
         _btn_cols = st.columns(2)
         with _btn_cols[0]:
