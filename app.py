@@ -34,7 +34,7 @@ PP_SECURITY_TYPES = [
     "Units - Shares and Rights",
     "Units - Shares, Warrants, and Rights",
 ]
-FILING_TYPES = ["S-1", "S-1/A", "8-K (IPO)", "8-K (Combination)", "424B4", "Other"]
+FILING_TYPES = ["S-1", "S-1/A", "8-K (IPO)", "8-K (Combination)", "424B4", "10-K", "Other"]
 
 # ── Supabase connections ───────────────────────────────────────────────────────
 
@@ -353,6 +353,7 @@ def find_edgar_urls(cik: str, effect_date: str) -> dict:
     s1_date        = None
     ipo_8k_url     = None
     ipo_8k_date    = None
+    tenk_filings   = []  # list of (filed_dt, url) for all 10-Ks after effect_dt
 
     for i, form in enumerate(forms):
         filed_dt = _date.fromisoformat(dates[i])
@@ -371,10 +372,16 @@ def find_edgar_urls(cik: str, effect_date: str) -> dict:
                 if ipo_8k_date is None or filed_dt < ipo_8k_date:
                     ipo_8k_url  = base
                     ipo_8k_date = filed_dt
+        if form == "10-K" and filed_dt > effect_dt:
+            tenk_filings.append((filed_dt, base))
+
+    # Sort 10-Ks ascending by date so 1st, 2nd, 3rd order is correct
+    tenk_filings.sort(key=lambda x: x[0])
+    tenk_urls = [url for _, url in tenk_filings]
 
     if prospectus_url is None:
         raise ValueError(f"No 424B4 or 424B3 found for CIK {cik} within 3 days before / 21 days after {effect_date}")
-    return {"prospectus_url": prospectus_url, "s1_url": s1_url, "ipo_8k_url": ipo_8k_url}
+    return {"prospectus_url": prospectus_url, "s1_url": s1_url, "ipo_8k_url": ipo_8k_url, "tenk_urls": tenk_urls}
 
 def extract_from_8k(url: str) -> dict:
     resp = requests.get(
@@ -747,6 +754,7 @@ if st.session_state.is_admin:
                             data["prospectus_url"] = pf_url
                             data["s1_url"] = urls.get("s1_url")
                             data["ipo_8k_url"] = urls.get("ipo_8k_url")
+                            data["tenk_urls"] = urls.get("tenk_urls", [])
                             if urls.get("ipo_8k_url"):
                                 try:
                                     k8_data = extract_from_8k(urls["ipo_8k_url"])
@@ -935,6 +943,10 @@ if st.session_state.is_admin:
                         initial_filings.append({"type": "8-K (IPO)", "url": a_8k_url})
                     if a_prospectus_url:
                         initial_filings.append({"type": "424B4", "url": a_prospectus_url})
+                    _ordinals = ["1st", "2nd", "3rd", "4th", "5th"]
+                    for _n, _url in enumerate(pf.get("tenk_urls") or []):
+                        _desc = _ordinals[_n] if _n < len(_ordinals) else f"{_n+1}th"
+                        initial_filings.append({"type": "10-K", "url": _url, "desc": _desc})
 
                     new_row = {
                         "company_name":           a_name,
