@@ -828,7 +828,7 @@ if st.session_state.is_admin:
                 a_auditor_new = st.text_input("New auditor name", value=pf_auditor if pf_auditor not in _known_aud else "", placeholder="Type if not listed above")
                 a_auditor_since     = st.text_input("Auditor Since", value=str(pf.get("auditor_since", "")) if pf.get("auditor_since") else "")
                 a_audit_report_date = st.text_input("Audit Report Date", value=pf.get("audit_report_date") or "")
-                a_audit_partner_id  = st.text_input("Audit Partner ID")
+                a_audit_partner_id  = st.text_input("Audit Partner ID", value=pf.get("audit_partner_id") or "")
                 a_image             = st.text_input("Image URL")
 
             with c2:
