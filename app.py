@@ -648,7 +648,7 @@ if not df_dated.empty:
 
 if not df.empty:
     with st.expander("Detail View"):
-        names  = df["company_name"].tolist()
+        names  = sorted(df["company_name"].dropna().tolist())
         chosen = st.selectbox("Select a company", names, key="detail_select")
         if chosen:
             row = df[df["company_name"] == chosen].iloc[0]
