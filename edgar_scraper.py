@@ -381,6 +381,10 @@ def process_one_day(filing_date: date) -> None:
     filings.sort(key=lambda f: (CATEGORY_ORDER.get(f["category"], 99), f["company"]))
 
     spac_count = sum(1 for f in filings if f["sic"] == "6770")
+    if spac_count == 0:
+        log.info("No SPAC filings (SIC 6770) found for %s — skipping email.", filing_date)
+        return
+
     date_label = filing_date.strftime("%Y-%m-%d")
     subject = f"💸 SPAC IPO Filings {date_label}"
     html = build_html_email(filings, filing_date)
