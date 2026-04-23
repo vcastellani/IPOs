@@ -469,55 +469,83 @@ def extract_from_10k(url: str) -> dict:
     text = re.sub(r"\s+", " ", text).strip()
 
     lower = text.lower()
-    idx = lower.find("initial public offering and private placement")
-    if idx == -1:
-        idx = lower.find("initial public offering")
-    excerpt = text[max(0, idx - 100): idx + 8000] if idx != -1 else text[:12000]
+    # Search for phrases that appear only in the section body, not the table of contents.
+    # "consummated our/the initial public offering" is the most reliable anchor.
+    _anchors = [
+        "initial public offering and private placement",
+        "consummated our initial public offering",
+        "consummated the initial public offering",
+        "completed our initial public offering",
+        "closed our initial public offering",
+        "consummated its initial public offering",
+    ]
+    idx = -1
+    _matched_anchor = None
+    for _anchor in _anchors:
+        _i = lower.find(_anchor)
+        if _i != -1:
+            idx = _i
+            _matched_anchor = _anchor
+            break
+    excerpt = text[max(0, idx - 300): idx + 10000] if idx != -1 else text[:12000]
+    _debug_info = {"anchor": _matched_anchor, "idx": idx, "excerpt_start": excerpt[:300]}
 
     prompt = (
-        "Extract these fields from the 'Initial Public Offering and Private Placement' section of a SPAC 10-K annual report. "
+        "Extract these fields from the IPO section of a SPAC 10-K annual report. "
         "Return ONLY a raw JSON object:\n\n"
         "{\n"
         '  "ipo_date": "2024-07-03",\n'
         '  "offer_price": 10.00,\n'
-        '  "securities_offered": 5000000,\n'
-        '  "overallotment_exercised": 750000,\n'
-        '  "overallotment_exercised_date": "2024-07-08",\n'
-        '  "pp_securities": 228000,\n'
-        '  "pp_securities_type": "Units - Shares and Rights",\n'
-        '  "pp_price": 10.00,\n'
+        '  "securities_offered": 20000000,\n'
+        '  "overallotment_exercised": 3000000,\n'
+        '  "overallotment_exercised_date": "2024-07-03",\n'
+        '  "pp_securities": 6000000,\n'
+        '  "pp_securities_type": "Warrants",\n'
+        '  "pp_price": 1.00,\n'
         '  "pp_securities_2": null,\n'
         '  "pp_securities_type_2": null,\n'
         '  "pp_price_2": null,\n'
-        '  "ticker": "EURK",\n'
-        '  "ticker_units": "EURKU",\n'
-        '  "ticker_warrants": null,\n'
-        '  "ticker_rights": "EURKR",\n'
+        '  "ticker": "ACME",\n'
+        '  "ticker_units": "ACMEU",\n'
+        '  "ticker_warrants": "ACMEW",\n'
+        '  "ticker_rights": null,\n'
         '  "exchange": "NASDAQ"\n'
         "}\n\n"
         "Rules:\n"
         '- ipo_date: date the IPO was consummated/closed in YYYY-MM-DD format\n'
         '- offer_price: price per unit/share in the IPO as a float (e.g., 10.00)\n'
-        '- securities_offered: integer count of units/shares sold in the BASE IPO (excluding over-allotment)\n'
-        '- overallotment_exercised: integer count of additional securities sold under the over-allotment option; null if not exercised\n'
-        '- overallotment_exercised_date: YYYY-MM-DD date the over-allotment units were actually sold; null if not exercised\n'
-        '- pp_securities: TOTAL integer count of ALL private placement securities of the FIRST type (combine initial + any OA-related PP of the same type)\n'
-        '- pp_securities_type: type of first PP security, exactly one of: "Shares", "Warrants", "Units - Shares and Warrants", "Units - Shares and Rights", "Units - Shares, Warrants, and Rights"; null if not found\n'
-        '- pp_price: price per security of the first PP as a float\n'
-        '- pp_securities_2: TOTAL count of a second distinct PP security type if one exists; null if none\n'
+        '- securities_offered: BASE IPO count only (EXCLUDING over-allotment). '
+        'IMPORTANT: if text says "X Units, including Y Units for the over-allotment", base = X - Y. '
+        'If text says "X Units" with no mention of inclusion, use X as base.\n'
+        '- overallotment_exercised: integer count of over-allotment securities; null if OA was not exercised\n'
+        '- overallotment_exercised_date: date OA units were sold in YYYY-MM-DD. '
+        'If OA was exercised "simultaneously" or "concurrently" with the IPO closing, use the same date as ipo_date. '
+        'If OA was exercised on a separate later date, use that date. Null if OA not exercised.\n'
+        '- pp_securities: TOTAL count of all private placement securities of the FIRST type sold '
+        '"simultaneously with the closing" of the IPO (or simultaneously with the OA closing). '
+        'Combine any separate tranches of the same security type (initial + OA-related). '
+        'IMPORTANT: do NOT include founder shares / initial shares / insider shares / promoter shares '
+        'issued to initial shareholders before the IPO for nominal consideration (e.g. $25,000 for '
+        'millions of shares, or ~$0.003–$0.02 per share). Those are founder shares, not the private placement.\n'
+        '- pp_securities_type: classify the first PP security as exactly one of: '
+        '"Shares", "Warrants", "Units - Shares and Warrants", "Units - Shares and Rights", '
+        '"Units - Shares, Warrants, and Rights". '
+        '"Private Placement Warrants" = "Warrants". "Private Units" = match to the appropriate Units type based on what each unit contains.\n'
+        '- pp_price: price per security of the first PP as a float (typically $10.00 per unit or $1.00–$1.50 per warrant)\n'
+        '- pp_securities_2: TOTAL count of a second DISTINCT PP security type if one exists; null if none\n'
         '- pp_securities_type_2: type of second PP security (same options); null if none\n'
         '- pp_price_2: price per security of the second PP; null if none\n'
-        '- ticker: common stock ticker (no suffix, e.g. "EURK"); null if only units trade separately\n'
-        '- ticker_units: units ticker (typically ends in "U", e.g. "EURKU"); null if not listed\n'
-        '- ticker_warrants: warrant ticker (typically ends in "W" or "WS"); null if no warrants\n'
-        '- ticker_rights: rights ticker (typically ends in "R"); null if no rights\n'
+        '- ticker: common stock ticker symbol (no suffix); null if only units are listed or tickers not mentioned\n'
+        '- ticker_units: units ticker (typically ends in "U"); null if not mentioned\n'
+        '- ticker_warrants: warrant ticker (typically ends in "W" or "WS"); null if no warrants or not mentioned\n'
+        '- ticker_rights: rights ticker (typically ends in "R"); null if no rights or not mentioned\n'
         '- exchange: exactly one of "NYSE", "NASDAQ", "AMEX"; null if not found\n\n'
         "Filing text:\n" + excerpt
     )
 
     msg = anthropic_client().messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=600,
+        max_tokens=900,
         system=[{
             "type": "text",
             "text": "You are a financial document parser for SEC filings. Output ONLY a raw JSON object. No explanation, no reasoning, no markdown, no prose — just the JSON object starting with { and ending with }.",
@@ -527,6 +555,7 @@ def extract_from_10k(url: str) -> dict:
     )
 
     raw = msg.content[0].text.strip()
+    _debug_info["claude_raw"] = raw[:600]
     json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)?\}', raw, re.DOTALL)
     if json_match:
         raw = json_match.group(0)
@@ -534,9 +563,11 @@ def extract_from_10k(url: str) -> dict:
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
         raw = re.sub(r"\s*```$", "", raw.strip())
     try:
-        return json.loads(raw)
+        result = json.loads(raw)
+        result["_debug"] = _debug_info
+        return result
     except json.JSONDecodeError:
-        return {}
+        return {"_debug": _debug_info}
 
 
 def refresh():
@@ -1394,8 +1425,15 @@ if st.session_state.is_admin:
             if "verify_result" in st.session_state:
                 _vid, _vlabel, _ext = st.session_state["verify_result"]
                 if _vid == v_id and _vlabel == v_tenk_label:
-                    if not _ext:
-                        st.error("Could not extract data — the 10-K may lack a structured IPO/PP section.")
+                    _dbg = _ext.pop("_debug", {})
+                    with st.expander("Debug info"):
+                        st.write(f"**Anchor matched:** `{_dbg.get('anchor')}`  |  **Position:** {_dbg.get('idx')}")
+                        st.write("**Excerpt start (first 300 chars):**")
+                        st.code(_dbg.get("excerpt_start", ""), language=None)
+                        st.write("**Claude raw response:**")
+                        st.code(_dbg.get("claude_raw", ""), language=None)
+                    if not _ext or all(v is None for v in _ext.values()):
+                        st.error("Could not extract data — the 10-K may lack a structured IPO/PP section. Check debug info above.")
                     else:
                         st.markdown(f"#### Stored vs. {_vlabel}")
 
