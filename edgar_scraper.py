@@ -314,7 +314,7 @@ def build_html_email(filings: list[dict], filing_date: date) -> str:
         "<body style='font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:#f9fafb;margin:0;padding:0;'>"
         "<div style='max-width:900px;margin:32px auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.1);'>"
         "<div style='background:#1a3a6e;padding:24px 32px;color:#fff;'>"
-        "<h1 style='margin:0;font-size:20px;font-weight:700;'>Filed Effective Forms on EDGAR</h1>"
+        "<h1 style='margin:0;font-size:20px;font-weight:700;'>💸 SPAC IPO Filings</h1>"
         "<p style='margin:6px 0 0;opacity:0.85;font-size:14px;'>" + date_str + "</p>"
         "</div>"
         "<div style='padding:24px 32px;'>"
@@ -382,7 +382,7 @@ def process_one_day(filing_date: date) -> None:
 
     spac_count = sum(1 for f in filings if f["sic"] == "6770")
     date_label = filing_date.strftime("%Y-%m-%d")
-    subject = f"SPAC EFFECT Filings on EDGAR — {date_label} ({spac_count} SPAC{'s' if spac_count != 1 else ''})"
+    subject = f"💸 SPAC IPO Filings {date_label}"
     html = build_html_email(filings, filing_date)
     send_email(subject, html)
     log.info("Email sent for %s.", filing_date)
