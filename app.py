@@ -673,7 +673,7 @@ with st.sidebar:
 
 # ── Main table ────────────────────────────────────────────────────────────────
 
-st.header("SPAC IPOs")
+st.header("Special Purpose Acquisition Company (SPAC) IPOs")
 
 df = load_ipos()
 
@@ -699,14 +699,14 @@ if not df.empty:
         / 1_000_000
     ).round(1)
 
-    display_cols = [c for c in ["company_name", "prospectus_url", "cik", "ticker", "size_m", "verified"] if c in df.columns]
+    display_cols = [c for c in ["company_name", "cik", "ipo_date", "size_m", "prospectus_url", "verified"] if c in df.columns]
 
     col_cfg = {
         "company_name":   st.column_config.TextColumn("Company"),
-        "prospectus_url": st.column_config.LinkColumn("Prospectus", display_text="📄"),
         "cik":            st.column_config.TextColumn("CIK"),
-        "ticker":         st.column_config.TextColumn("Ticker"),
+        "ipo_date":       st.column_config.DateColumn("IPO Date", format="YYYY-MM-DD"),
         "size_m":         st.column_config.NumberColumn("Size ($M)", format="$ %.1f"),
+        "prospectus_url": st.column_config.LinkColumn("Prospectus", display_text="📄"),
         "verified":       st.column_config.CheckboxColumn("Verified", disabled=True),
     }
     st.dataframe(
@@ -742,23 +742,17 @@ df_all = load_ipos()
 df_dated = df_all[df_all["ipo_date"].notna()].copy()
 if not df_dated.empty:
     df_dated["ipo_date"] = pd.to_datetime(df_dated["ipo_date"])
-    years_available = sorted(df_dated["ipo_date"].dt.year.unique().tolist(), reverse=True)
-    if years_available:
-        sel_year = st.selectbox("Year", years_available, key="chart_year")
-        df_year  = df_dated[df_dated["ipo_date"].dt.year == sel_year]
+    yearly = (
+        df_dated.groupby(df_dated["ipo_date"].dt.year)
+        .size()
+        .sort_index()
+    )
+    yearly.index = yearly.index.astype(str)
+    yearly.name  = "SPAC IPOs"
 
-        MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
-        monthly = (
-            df_year.groupby(df_year["ipo_date"].dt.month)
-            .size()
-            .reindex(range(1, 13), fill_value=0)
-        )
-        monthly.index = MONTH_NAMES
-        monthly.name  = "SPAC IPOs"
-
-        st.markdown(f"**SPAC IPOs by Month — {sel_year}**")
-        st.bar_chart(monthly, y_label="# of IPOs", x_label="Month")
-        st.caption(f"{len(df_year)} IPO(s) in {sel_year}")
+    st.markdown("**SPAC IPOs per Year**")
+    st.bar_chart(yearly, y_label="# of IPOs", x_label="Year")
+    st.caption(f"{len(df_dated)} IPO(s) total across {len(yearly)} year(s)")
     st.divider()
 
 # ── Detail view ───────────────────────────────────────────────────────────────
