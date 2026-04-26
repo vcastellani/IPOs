@@ -469,8 +469,8 @@ def extract_from_10k(url: str) -> dict:
     text = re.sub(r"\s+", " ", text).strip()
 
     lower = text.lower()
-    # Search for phrases that appear only in the section body, not the table of contents.
-    # "consummated our/the initial public offering" is the most reliable anchor.
+    # Find ALL anchor positions and pick the earliest one that isn't in the cover/ToC
+    # (positions < 2000 are excluded as they'd be cover page or table of contents)
     _anchors = [
         "initial public offering and private placement",
         "consummated our initial public offering",
@@ -479,14 +479,15 @@ def extract_from_10k(url: str) -> dict:
         "closed our initial public offering",
         "consummated its initial public offering",
     ]
-    idx = -1
-    _matched_anchor = None
+    _anchor_hits = []
     for _anchor in _anchors:
         _i = lower.find(_anchor)
-        if _i != -1:
-            idx = _i
-            _matched_anchor = _anchor
-            break
+        if _i > 2000:
+            _anchor_hits.append((_i, _anchor))
+    if _anchor_hits:
+        idx, _matched_anchor = min(_anchor_hits, key=lambda x: x[0])
+    else:
+        idx, _matched_anchor = -1, None
     excerpt = text[max(0, idx - 300): idx + 10000] if idx != -1 else text[:12000]
 
     # Grab the cover page (start of document) — contains the Section 12(b) securities table
