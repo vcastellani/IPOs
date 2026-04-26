@@ -488,6 +488,21 @@ def extract_from_10k(url: str) -> dict:
             _matched_anchor = _anchor
             break
     excerpt = text[max(0, idx - 300): idx + 10000] if idx != -1 else text[:12000]
+
+    # Also grab Item 5 (Market Information) for ticker symbols, which are often listed there
+    _item5_anchors = [
+        "market for registrant",
+        "item 5. market",
+        "item\xa05.",
+    ]
+    _item5_idx = -1
+    for _a5 in _item5_anchors:
+        _i5 = lower.find(_a5)
+        if _i5 != -1:
+            _item5_idx = _i5
+            break
+    ticker_excerpt = text[_item5_idx: _item5_idx + 3000] if _item5_idx != -1 else ""
+
     _debug_info = {"anchor": _matched_anchor, "idx": idx, "excerpt_start": excerpt[:300]}
 
     prompt = (
@@ -535,12 +550,13 @@ def extract_from_10k(url: str) -> dict:
         '- pp_securities_2: TOTAL count of a second DISTINCT PP security type if one exists; null if none\n'
         '- pp_securities_type_2: type of second PP security (same options); null if none\n'
         '- pp_price_2: price per security of the second PP; null if none\n'
-        '- ticker: common stock ticker symbol (no suffix); null if only units are listed or tickers not mentioned\n'
-        '- ticker_units: units ticker (typically ends in "U"); null if not mentioned\n'
+        '- ticker: common stock ticker symbol (no suffix); check both the IPO section and the Market Information section\n'
+        '- ticker_units: units ticker (typically ends in "U"); null if not mentioned in either section\n'
         '- ticker_warrants: warrant ticker (typically ends in "W" or "WS"); null if no warrants or not mentioned\n'
         '- ticker_rights: rights ticker (typically ends in "R"); null if no rights or not mentioned\n'
         '- exchange: exactly one of "NYSE", "NASDAQ", "AMEX"; null if not found\n\n'
-        "Filing text:\n" + excerpt
+        "IPO section:\n" + excerpt
+        + ("\n\nMarket Information section (use for ticker symbols):\n" + ticker_excerpt if ticker_excerpt else "")
     )
 
     msg = anthropic_client().messages.create(
@@ -1389,14 +1405,13 @@ if st.session_state.is_admin:
             v_tenk_url = v_tenk_filings[0]["url"]
             v_tenk_label = "1st 10-K"
 
-            is_verified = bool(v_row.get("verified"))
-            if is_verified:
-                st.success("✅ This record is already marked as verified.")
+            st.link_button("View 1st 10-K 📄", v_tenk_url, use_container_width=True)
 
             vcol1, vcol2 = st.columns(2)
             with vcol1:
                 run_verify = st.button("Run IPO Verification", key="run_verify_btn", use_container_width=True)
             with vcol2:
+                is_verified = bool(v_row.get("verified"))
                 mark_verified = st.button(
                     "✅ Mark as Verified",
                     key="mark_verified_btn",
@@ -1407,7 +1422,18 @@ if st.session_state.is_admin:
 
             if mark_verified and not is_verified:
                 try:
-                    service_client().table("ipos").update({"verified": True}).eq("id", v_id).execute()
+                    patch = {"verified": True}
+                    # If OA was exercised but date is missing, fill with IPO date
+                    if v_row.get("overallotment_exercised") and not v_row.get("overallotment_exercised_date") and v_row.get("ipo_date"):
+                        patch["overallotment_exercised_date"] = v_row["ipo_date"]
+                    # Also apply extracted OA date if it was found and stored is missing
+                    if "verify_result" in st.session_state:
+                        _vr = st.session_state["verify_result"]
+                        if _vr[0] == v_id:
+                            _ext_oa_date = _vr[2].get("overallotment_exercised_date")
+                            if _ext_oa_date and not v_row.get("overallotment_exercised_date"):
+                                patch["overallotment_exercised_date"] = _ext_oa_date
+                    service_client().table("ipos").update(patch).eq("id", v_id).execute()
                     st.success(f"Marked {v_row['company_name']} as verified!")
                     refresh()
                     st.rerun()
@@ -1459,13 +1485,14 @@ if st.session_state.is_admin:
                             return "✅" if str(stored).strip().lower() == str(extr).strip().lower() else "❌"
 
                         comparisons = [
-                            ("IPO Date",          v_row.get("ipo_date"),               _ext.get("ipo_date")),
-                            ("Securities Offered", v_row.get("securities_offered"),    _ext.get("securities_offered")),
-                            ("OA Exercised",       v_row.get("overallotment_exercised"),_ext.get("overallotment_exercised")),
-                            ("Ticker",             v_row.get("ticker"),                _ext.get("ticker")),
-                            ("Units Ticker",       v_row.get("ticker_units"),          _ext.get("ticker_units")),
-                            ("Warrant Ticker",     v_row.get("ticker_warrants"),       _ext.get("ticker_warrants")),
-                            ("Rights Ticker",      v_row.get("ticker_rights"),         _ext.get("ticker_rights")),
+                            ("IPO Date",           v_row.get("ipo_date"),                     _ext.get("ipo_date")),
+                            ("Securities Offered", v_row.get("securities_offered"),           _ext.get("securities_offered")),
+                            ("OA Exercised",       v_row.get("overallotment_exercised"),      _ext.get("overallotment_exercised")),
+                            ("OA Exercised Date",  v_row.get("overallotment_exercised_date"), _ext.get("overallotment_exercised_date")),
+                            ("Ticker",             v_row.get("ticker"),                       _ext.get("ticker")),
+                            ("Units Ticker",       v_row.get("ticker_units"),                 _ext.get("ticker_units")),
+                            ("Warrant Ticker",     v_row.get("ticker_warrants"),              _ext.get("ticker_warrants")),
+                            ("Rights Ticker",      v_row.get("ticker_rights"),                _ext.get("ticker_rights")),
                         ]
 
                         mismatches = 0
