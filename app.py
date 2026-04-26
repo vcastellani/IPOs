@@ -456,32 +456,46 @@ def extract_from_8k(url: str) -> dict:
         return {}
 
 def _extract_registered_securities(raw_html: str) -> str:
-    """Parse the Section 12(b) registered securities table from raw 10-K HTML.
-    Returns pipe-delimited rows: security description | ticker | exchange
+    """Extract the Section 12(b) registered securities block from a 10-K.
+    Tries HTML table parsing first; falls back to stripped-text extraction.
     """
+    # ── Attempt 1: parse <table> structure ────────────────────────────────
     lower_html = raw_html.lower()
     idx = lower_html.find("section 12(b)")
     if idx == -1:
         idx = lower_html.find("trading symbol")
-    if idx == -1:
+    if idx != -1:
+        table_start = raw_html.find("<table", idx)
+        if table_start != -1:
+            table_end = raw_html.find("</table>", table_start)
+            if table_end != -1:
+                table_html = raw_html[table_start: table_end + 8]
+                rows = re.findall(r"<tr[^>]*>(.*?)</tr>", table_html, re.DOTALL | re.IGNORECASE)
+                lines = []
+                for row in rows:
+                    cells = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.DOTALL | re.IGNORECASE)
+                    cells = [re.sub(r"<[^>]+>", " ", c) for c in cells]
+                    cells = [re.sub(r"\s+", " ", c).strip() for c in cells]
+                    cells = [c for c in cells if c and c.strip("\xa0")]
+                    if len(cells) >= 2:
+                        lines.append(" | ".join(cells))
+                if len(lines) >= 2:  # at least header + one data row
+                    return "\n".join(lines)
+
+    # ── Fallback: extract the 12(b) text block from stripped HTML ─────────
+    stripped = re.sub(r"<[^>]+>", " ", raw_html)
+    stripped = re.sub(r"\s+", " ", stripped).strip()
+    lower_s = stripped.lower()
+
+    start = lower_s.find("section 12(b)")
+    if start == -1:
+        start = lower_s.find("trading symbol")
+    if start == -1:
         return ""
-    table_start = raw_html.find("<table", idx)
-    if table_start == -1:
-        return ""
-    table_end = raw_html.find("</table>", table_start)
-    if table_end == -1:
-        return ""
-    table_html = raw_html[table_start: table_end + 8]
-    rows = re.findall(r"<tr[^>]*>(.*?)</tr>", table_html, re.DOTALL | re.IGNORECASE)
-    lines = []
-    for row in rows:
-        cells = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.DOTALL | re.IGNORECASE)
-        cells = [re.sub(r"<[^>]+>", " ", c) for c in cells]
-        cells = [re.sub(r"\s+", " ", c).strip() for c in cells]
-        cells = [c for c in cells if c and c not in (" ", "\xa0")]
-        if len(cells) >= 2:
-            lines.append(" | ".join(cells))
-    return "\n".join(lines)
+
+    end = lower_s.find("section 12(g)", start + 10)
+    block = stripped[start: end + 50 if end != -1 else start + 2500]
+    return block[:2500]
 
 
 def extract_from_10k(url: str) -> dict:
@@ -536,7 +550,7 @@ def extract_from_10k(url: str) -> dict:
             break
     ticker_excerpt = text[_item5_idx: _item5_idx + 3000] if _item5_idx != -1 else ""
 
-    _debug_info = {"anchor": _matched_anchor, "idx": idx, "excerpt_start": excerpt[:300]}
+    _debug_info = {"anchor": _matched_anchor, "idx": idx, "excerpt_start": excerpt[:300], "sec12b": sec12b_text[:400]}
 
     prompt = (
         "Extract these fields from the IPO section of a SPAC 10-K annual report. "
@@ -1489,6 +1503,8 @@ if st.session_state.is_admin:
                     _dbg = _ext.pop("_debug", {})
                     with st.expander("Debug info"):
                         st.write(f"**Anchor matched:** `{_dbg.get('anchor')}`  |  **Position:** {_dbg.get('idx')}")
+                        st.write("**Section 12(b) extracted (first 400 chars):**")
+                        st.code(_dbg.get("sec12b", ""), language=None)
                         st.write("**Excerpt start (first 300 chars):**")
                         st.code(_dbg.get("excerpt_start", ""), language=None)
                         st.write("**Claude raw response:**")
