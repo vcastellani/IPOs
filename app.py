@@ -489,7 +489,10 @@ def extract_from_10k(url: str) -> dict:
             break
     excerpt = text[max(0, idx - 300): idx + 10000] if idx != -1 else text[:12000]
 
-    # Also grab Item 5 (Market Information) for ticker symbols, which are often listed there
+    # Grab the cover page (start of document) — contains the Section 12(b) securities table
+    cover_excerpt = text[:3000]
+
+    # Also grab Item 5 (Market Information) for ticker symbols
     _item5_anchors = [
         "market for registrant",
         "item 5. market",
@@ -555,7 +558,8 @@ def extract_from_10k(url: str) -> dict:
         '- ticker_warrants: warrant ticker (typically ends in "W" or "WS"); null if no warrants or not mentioned\n'
         '- ticker_rights: rights ticker (typically ends in "R"); null if no rights or not mentioned\n'
         '- exchange: exactly one of "NYSE", "NASDAQ", "AMEX"; null if not found\n\n'
-        "IPO section:\n" + excerpt
+        "Cover page (contains Section 12(b) securities/ticker table):\n" + cover_excerpt
+        + "\n\nIPO section:\n" + excerpt
         + ("\n\nMarket Information section (use for ticker symbols):\n" + ticker_excerpt if ticker_excerpt else "")
     )
 
