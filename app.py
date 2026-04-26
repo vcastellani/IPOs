@@ -833,7 +833,7 @@ if not df.empty:
 if st.session_state.is_admin:
     st.divider()
     st.subheader("Admin Panel")
-    tab_add, tab_edit, tab_verify = st.tabs(["Add New Entry", "Edit / Delete", "Verify 10-K"])
+    tab_add, tab_edit, tab_verify = st.tabs(["Add New Entry", "Edit / Delete", "IPO Verification"])
 
     # ── Add ───────────────────────────────────────────────────────────────────
     with tab_add:
@@ -1367,24 +1367,27 @@ if st.session_state.is_admin:
                 return False
             return any(isinstance(f, dict) and f.get("type") == "10-K" for f in filings_val)
 
-        df_with_tenk = full_df_v[full_df_v["filings"].apply(_has_tenk)]
+        # Only show unverified records that have a 10-K filing
+        df_to_verify = full_df_v[
+            full_df_v["filings"].apply(_has_tenk) &
+            ~full_df_v["verified"].fillna(False).astype(bool)
+        ]
 
-        if df_with_tenk.empty:
-            st.info("No records with 10-K filings yet. Run 'Find & Extract' on a SPAC that has filed a 10-K.")
+        if df_to_verify.empty:
+            st.info("No unverified records with 10-K filings. Either all records are verified or none have a 10-K yet.")
         else:
             v_options = {
                 f"{r['company_name']}  (ID {r['id']})": r["id"]
-                for _, r in df_with_tenk.sort_values("company_name").iterrows()
+                for _, r in df_to_verify.sort_values("company_name").iterrows()
             }
             v_sel_label = st.selectbox("Select company", list(v_options.keys()), key="verify_select")
             v_id = v_options[v_sel_label]
             v_row = full_df_v[full_df_v["id"] == v_id].iloc[0]
 
+            # Always use the 1st 10-K
             v_tenk_filings = [f for f in (v_row.get("filings") or []) if isinstance(f, dict) and f.get("type") == "10-K"]
-            v_tenk_opts = {f"{f.get('desc', str(i+1))} 10-K": f["url"] for i, f in enumerate(v_tenk_filings)}
-
-            v_tenk_label = st.selectbox("Select 10-K filing", list(v_tenk_opts.keys()), key="verify_tenk_select")
-            v_tenk_url = v_tenk_opts[v_tenk_label]
+            v_tenk_url = v_tenk_filings[0]["url"]
+            v_tenk_label = "1st 10-K"
 
             is_verified = bool(v_row.get("verified"))
             if is_verified:
@@ -1392,7 +1395,7 @@ if st.session_state.is_admin:
 
             vcol1, vcol2 = st.columns(2)
             with vcol1:
-                run_verify = st.button("Run 10-K Verification", key="run_verify_btn", use_container_width=True)
+                run_verify = st.button("Run IPO Verification", key="run_verify_btn", use_container_width=True)
             with vcol2:
                 mark_verified = st.button(
                     "✅ Mark as Verified",
@@ -1456,22 +1459,13 @@ if st.session_state.is_admin:
                             return "✅" if str(stored).strip().lower() == str(extr).strip().lower() else "❌"
 
                         comparisons = [
-                            ("IPO Date",             v_row.get("ipo_date"),                    _ext.get("ipo_date")),
-                            ("Offer Price ($)",       v_row.get("offer_price"),                 _ext.get("offer_price")),
-                            ("Securities Offered",    v_row.get("securities_offered"),          _ext.get("securities_offered")),
-                            ("OA Exercised",          v_row.get("overallotment_exercised"),     _ext.get("overallotment_exercised")),
-                            ("OA Exercised Date",     v_row.get("overallotment_exercised_date"),_ext.get("overallotment_exercised_date")),
-                            ("PP Securities (1)",     v_row.get("pp_securities"),               _ext.get("pp_securities")),
-                            ("PP Type (1)",           v_row.get("pp_securities_type"),          _ext.get("pp_securities_type")),
-                            ("PP Price (1) ($)",      v_row.get("pp_price"),                    _ext.get("pp_price")),
-                            ("PP Securities (2)",     v_row.get("pp_securities_2"),             _ext.get("pp_securities_2")),
-                            ("PP Type (2)",           v_row.get("pp_securities_type_2"),        _ext.get("pp_securities_type_2")),
-                            ("PP Price (2) ($)",      v_row.get("pp_price_2"),                  _ext.get("pp_price_2")),
-                            ("Ticker",                v_row.get("ticker"),                      _ext.get("ticker")),
-                            ("Units Ticker",          v_row.get("ticker_units"),                _ext.get("ticker_units")),
-                            ("Warrant Ticker",        v_row.get("ticker_warrants"),             _ext.get("ticker_warrants")),
-                            ("Rights Ticker",         v_row.get("ticker_rights"),               _ext.get("ticker_rights")),
-                            ("Exchange",              v_row.get("exchange"),                    _ext.get("exchange")),
+                            ("IPO Date",          v_row.get("ipo_date"),               _ext.get("ipo_date")),
+                            ("Securities Offered", v_row.get("securities_offered"),    _ext.get("securities_offered")),
+                            ("OA Exercised",       v_row.get("overallotment_exercised"),_ext.get("overallotment_exercised")),
+                            ("Ticker",             v_row.get("ticker"),                _ext.get("ticker")),
+                            ("Units Ticker",       v_row.get("ticker_units"),          _ext.get("ticker_units")),
+                            ("Warrant Ticker",     v_row.get("ticker_warrants"),       _ext.get("ticker_warrants")),
+                            ("Rights Ticker",      v_row.get("ticker_rights"),         _ext.get("ticker_rights")),
                         ]
 
                         mismatches = 0
