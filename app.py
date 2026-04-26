@@ -455,6 +455,35 @@ def extract_from_8k(url: str) -> dict:
     except json.JSONDecodeError:
         return {}
 
+def _extract_registered_securities(raw_html: str) -> str:
+    """Parse the Section 12(b) registered securities table from raw 10-K HTML.
+    Returns pipe-delimited rows: security description | ticker | exchange
+    """
+    lower_html = raw_html.lower()
+    idx = lower_html.find("section 12(b)")
+    if idx == -1:
+        idx = lower_html.find("trading symbol")
+    if idx == -1:
+        return ""
+    table_start = raw_html.find("<table", idx)
+    if table_start == -1:
+        return ""
+    table_end = raw_html.find("</table>", table_start)
+    if table_end == -1:
+        return ""
+    table_html = raw_html[table_start: table_end + 8]
+    rows = re.findall(r"<tr[^>]*>(.*?)</tr>", table_html, re.DOTALL | re.IGNORECASE)
+    lines = []
+    for row in rows:
+        cells = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.DOTALL | re.IGNORECASE)
+        cells = [re.sub(r"<[^>]+>", " ", c) for c in cells]
+        cells = [re.sub(r"\s+", " ", c).strip() for c in cells]
+        cells = [c for c in cells if c and c not in (" ", "\xa0")]
+        if len(cells) >= 2:
+            lines.append(" | ".join(cells))
+    return "\n".join(lines)
+
+
 def extract_from_10k(url: str) -> dict:
     """Extract key IPO/PP verification fields from a 10-K primary document."""
     resp = requests.get(
@@ -490,8 +519,8 @@ def extract_from_10k(url: str) -> dict:
         idx, _matched_anchor = -1, None
     excerpt = text[max(0, idx - 300): idx + 10000] if idx != -1 else text[:12000]
 
-    # Grab the cover page (start of document) — contains the Section 12(b) securities table
-    cover_excerpt = text[:3000]
+    # Parse the Section 12(b) table from raw HTML before stripping tags
+    sec12b_text = _extract_registered_securities(resp.text)
 
     # Also grab Item 5 (Market Information) for ticker symbols
     _item5_anchors = [
@@ -554,14 +583,18 @@ def extract_from_10k(url: str) -> dict:
         '- pp_securities_2: TOTAL count of a second DISTINCT PP security type if one exists; null if none\n'
         '- pp_securities_type_2: type of second PP security (same options); null if none\n'
         '- pp_price_2: price per security of the second PP; null if none\n'
-        '- ticker: common stock ticker symbol (no suffix); check both the IPO section and the Market Information section\n'
-        '- ticker_units: units ticker (typically ends in "U"); null if not mentioned in either section\n'
-        '- ticker_warrants: warrant ticker (typically ends in "W" or "WS"); null if no warrants or not mentioned\n'
-        '- ticker_rights: rights ticker (typically ends in "R"); null if no rights or not mentioned\n'
+        '- ticker: common stock / ordinary shares ticker (no suffix), e.g. "LEGT" or "ACME"; '
+        'find it in the Registered Securities table labeled "Ordinary Shares", "Class A Common Stock", etc.\n'
+        '- ticker_units: units ticker — may have a space before the suffix, e.g. "LEGT U" or "ACMEU"; '
+        'labeled "Units" in the securities table\n'
+        '- ticker_warrants: warrant ticker — may have a space before suffix, e.g. "LEGT WS", "ACMEW", "ACME WT"; '
+        'labeled "Warrants" in the securities table; null if no warrants\n'
+        '- ticker_rights: rights ticker — may have a space before "R", e.g. "ACMER" or "ACME R"; '
+        'labeled "Rights" in the securities table; null if no rights\n'
         '- exchange: exactly one of "NYSE", "NASDAQ", "AMEX"; null if not found\n\n'
-        "Cover page (contains Section 12(b) securities/ticker table):\n" + cover_excerpt
-        + "\n\nIPO section:\n" + excerpt
-        + ("\n\nMarket Information section (use for ticker symbols):\n" + ticker_excerpt if ticker_excerpt else "")
+        + ("Registered Securities (Section 12(b) table — pipe-separated: description | ticker | exchange):\n" + sec12b_text + "\n\n" if sec12b_text else "")
+        + "IPO section:\n" + excerpt
+        + ("\n\nMarket Information section:\n" + ticker_excerpt if ticker_excerpt else "")
     )
 
     msg = anthropic_client().messages.create(
