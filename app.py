@@ -498,6 +498,85 @@ def _extract_registered_securities(raw_html: str) -> str:
     return block[:2500]
 
 
+def _parse_tickers_from_sec12b(sec12b_text: str) -> dict:
+    """Regex-based ticker extraction from Section 12(b) block; bypasses Claude.
+    Returns a dict with any of: ticker, ticker_units, ticker_warrants, ticker_rights, exchange.
+    """
+    if not sec12b_text:
+        return {}
+
+    result: dict = {}
+
+    def _exch(raw: str) -> str:
+        r = raw.lower()
+        if "nasdaq" in r:
+            return "NASDAQ"
+        if "amex" in r or "american" in r:
+            return "AMEX"
+        if "nyse" in r or "new york" in r:
+            return "NYSE"
+        return ""
+
+    def _kind(desc: str) -> str:
+        d = desc.lower()
+        if "unit" in d:
+            return "units"
+        if "warrant" in d:
+            return "warrants"
+        if "right" in d:
+            return "rights"
+        if any(k in d for k in ("common stock", "ordinary share", "class a", "class b", "share", "stock")):
+            return "common"
+        return ""
+
+    if "|" in sec12b_text:
+        for line in sec12b_text.splitlines():
+            parts = [p.strip() for p in line.split("|")]
+            if len(parts) < 2:
+                continue
+            desc, ticker = parts[0], parts[1]
+            exch_raw = parts[2] if len(parts) > 2 else ""
+            if not ticker or not re.match(r"^[A-Z]", ticker):
+                continue
+            if ticker.lower() in ("trading symbol", "trading symbol(s)", "symbol", "ticker"):
+                continue
+            if not result.get("exchange") and exch_raw:
+                e = _exch(exch_raw)
+                if e:
+                    result["exchange"] = e
+            k = _kind(desc)
+            if k == "units":
+                result.setdefault("ticker_units", ticker)
+            elif k == "warrants":
+                result.setdefault("ticker_warrants", ticker)
+            elif k == "rights":
+                result.setdefault("ticker_rights", ticker)
+            elif k == "common":
+                result.setdefault("ticker", ticker)
+    else:
+        _EXCH_RE = r"(?:NASDAQ(?:\s+(?:CAPITAL\s+MARKET|GLOBAL\s+(?:SELECT\s+)?MARKET))?|NYSE(?:\s+(?:AMERICAN|ARCA|MKT))?|AMEX)"
+        _TICK_RE = r"([A-Z]{3,7}(?:\s[A-Z]{1,3})?)"
+        for m in re.finditer(_TICK_RE + r"\s+" + _EXCH_RE, sec12b_text):
+            ticker = m.group(1)
+            exch_raw = sec12b_text[m.start(): m.end()]
+            before = sec12b_text[max(0, m.start() - 150): m.start()]
+            if not result.get("exchange"):
+                e = _exch(exch_raw)
+                if e:
+                    result["exchange"] = e
+            k = _kind(before)
+            if k == "units":
+                result.setdefault("ticker_units", ticker)
+            elif k == "warrants":
+                result.setdefault("ticker_warrants", ticker)
+            elif k == "rights":
+                result.setdefault("ticker_rights", ticker)
+            elif k == "common":
+                result.setdefault("ticker", ticker)
+
+    return result
+
+
 def extract_from_10k(url: str) -> dict:
     """Extract key IPO/PP verification fields from a 10-K primary document."""
     resp = requests.get(
@@ -632,6 +711,20 @@ def extract_from_10k(url: str) -> dict:
         raw = re.sub(r"\s*```$", "", raw.strip())
     try:
         result = json.loads(raw)
+
+        # Override Claude's ticker fields with regex-based extraction (more reliable)
+        _regex_tickers = _parse_tickers_from_sec12b(sec12b_text)
+        for _field in ("ticker", "ticker_units", "ticker_warrants", "ticker_rights", "exchange"):
+            if _regex_tickers.get(_field):
+                result[_field] = _regex_tickers[_field]
+        _debug_info["regex_tickers"] = _regex_tickers
+
+        # When OA was exercised simultaneously with IPO, default the date to ipo_date
+        if (result.get("overallotment_exercised")
+                and not result.get("overallotment_exercised_date")
+                and result.get("ipo_date")):
+            result["overallotment_exercised_date"] = result["ipo_date"]
+
         result["_debug"] = _debug_info
         return result
     except json.JSONDecodeError:
