@@ -577,6 +577,104 @@ def _parse_tickers_from_sec12b(sec12b_text: str) -> dict:
     return result
 
 
+def _parse_tickers_from_xbrl(raw_html: str) -> dict:
+    """Extract tickers from iXBRL dei:TradingSymbol elements via StatementClassOfStockAxis context.
+    Returns a dict with any of: ticker, ticker_units, ticker_warrants, ticker_rights, exchange.
+    Falls back to ticker suffix classification when no axis context is found.
+    """
+    result: dict = {}
+    _ATTR_RE = re.compile(r'([\w:]+)\s*=\s*["\']([^"\']*)["\']')
+
+    # ── Step 1: collect contextRef → ticker from dei:TradingSymbol elements ──
+    tickers_by_ctx: dict[str, str] = {}
+    for m in re.finditer(
+        r'<ix:nonNumeric\b([^>]+)>([^<]*)</ix:nonNumeric>',
+        raw_html, re.IGNORECASE | re.DOTALL
+    ):
+        attrs = {k.lower(): v for k, v in _ATTR_RE.findall(m.group(1))}
+        if attrs.get("name", "").lower() != "dei:tradingsymbol":
+            continue
+        ticker = m.group(2).strip()
+        ctx = attrs.get("contextref", "")
+        if ticker and ctx:
+            tickers_by_ctx[ctx] = ticker
+
+    if not tickers_by_ctx:
+        return {}
+
+    # ── Step 2: classify each context by its StatementClassOfStockAxis member ──
+    def _member_kind(raw: str) -> str:
+        m = raw.lower().split(":")[-1]
+        if "unit" in m:
+            return "units"
+        if "warrant" in m:
+            return "warrants"
+        if "right" in m:
+            return "rights"
+        if any(k in m for k in ("classa", "classb", "commonstock", "ordinaryshare",
+                                  "commonshare", "classacommon", "classbcommon")):
+            return "common"
+        return "other"
+
+    def _suffix_kind(ticker: str) -> str:
+        t = ticker.upper().replace(" ", "")
+        if t.endswith("U"):
+            return "units"
+        if t.endswith(("WS", "WT", "W")):
+            return "warrants"
+        if t.endswith("R") and len(t) > 4:
+            return "rights"
+        return "common"
+
+    ctx_to_kind: dict[str, str] = {}
+    for cm in re.finditer(
+        r'<xbrli:context\b[^>]*\bid\s*=\s*["\']([^"\']+)["\'][^>]*>(.*?)</xbrli:context>',
+        raw_html, re.IGNORECASE | re.DOTALL
+    ):
+        ctx_id, ctx_body = cm.group(1), cm.group(2)
+        am = re.search(
+            r'dimension\s*=\s*["\'][^"\']*StatementClassOfStockAxis["\'][^>]*>\s*([^\s<]+)',
+            ctx_body, re.IGNORECASE
+        )
+        ctx_to_kind[ctx_id] = _member_kind(am.group(1)) if am else "other"
+
+    # ── Step 3: assign tickers to result fields ──
+    def _assign(kind: str, ticker: str) -> None:
+        if kind == "units":
+            result.setdefault("ticker_units", ticker)
+        elif kind == "warrants":
+            result.setdefault("ticker_warrants", ticker)
+        elif kind == "rights":
+            result.setdefault("ticker_rights", ticker)
+        else:
+            result.setdefault("ticker", ticker)
+
+    for ctx_ref, ticker in tickers_by_ctx.items():
+        kind = ctx_to_kind.get(ctx_ref, "other")
+        if kind == "other":
+            kind = _suffix_kind(ticker)
+        _assign(kind, ticker)
+
+    # ── Step 4: exchange from dei:SecurityExchangeName ──
+    for em in re.finditer(
+        r'<ix:nonNumeric\b([^>]+)>([^<]+)</ix:nonNumeric>',
+        raw_html, re.IGNORECASE | re.DOTALL
+    ):
+        attrs = {k.lower(): v for k, v in _ATTR_RE.findall(em.group(1))}
+        if attrs.get("name", "").lower() != "dei:securityexchangename":
+            continue
+        exch = em.group(2).strip().upper()
+        if "NASDAQ" in exch:
+            result["exchange"] = "NASDAQ"
+        elif "AMEX" in exch or "AMERICAN" in exch:
+            result["exchange"] = "AMEX"
+        elif "NYSE" in exch:
+            result["exchange"] = "NYSE"
+        break
+
+    return result
+
+
 def extract_from_10k(url: str) -> dict:
     """Extract key IPO/PP verification fields from a 10-K primary document."""
     resp = requests.get(
@@ -712,12 +810,16 @@ def extract_from_10k(url: str) -> dict:
     try:
         result = json.loads(raw)
 
-        # Override Claude's ticker fields with regex-based extraction (more reliable)
-        _regex_tickers = _parse_tickers_from_sec12b(sec12b_text)
+        # Override Claude's ticker fields: try iXBRL dei:TradingSymbol first,
+        # fall back to Section 12(b) regex if the filing lacks XBRL tags.
+        _xbrl_tickers = _parse_tickers_from_xbrl(resp.text)
+        _fallback_tickers = _parse_tickers_from_sec12b(sec12b_text) if not _xbrl_tickers else {}
+        _ticker_override = _xbrl_tickers or _fallback_tickers
         for _field in ("ticker", "ticker_units", "ticker_warrants", "ticker_rights", "exchange"):
-            if _regex_tickers.get(_field):
-                result[_field] = _regex_tickers[_field]
-        _debug_info["regex_tickers"] = _regex_tickers
+            if _ticker_override.get(_field):
+                result[_field] = _ticker_override[_field]
+        _debug_info["xbrl_tickers"] = _xbrl_tickers
+        _debug_info["fallback_tickers"] = _fallback_tickers
 
         # When OA was exercised simultaneously with IPO, default the date to ipo_date
         if (result.get("overallotment_exercised")
