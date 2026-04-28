@@ -54,4 +54,6 @@ jobs:
           EDGAR_DATE:       ${{ github.event.inputs.date }}
           EDGAR_START_DATE: ${{ github.event.inputs.start_date || env.EDGAR_START_DATE }}
           EDGAR_END_DATE:   ${{ github.event.inputs.end_date || env.EDGAR_END_DATE }}
+          SUPABASE_URL:     ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: python edgar_scraper.py

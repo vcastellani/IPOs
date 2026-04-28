@@ -128,6 +128,33 @@ Finds the earliest occurrence (> 2,000 chars into the document) of phrases like 
 
 ---
 
+## Automated pending queue
+
+When the EDGAR scraper finds new SPAC filings it now also writes them to a `pending_ipos` Supabase table. The admin **Pending Queue** tab shows these and lets Vincent review them one by one:
+
+1. Click **Extract from EDGAR & Load into Add Form** — runs the full `find_edgar_urls` → `extract_from_424b4` → `extract_from_8k` pipeline and pre-fills the Add New Entry form.
+2. Switch to **Add New Entry** tab — review/edit fields, then submit.
+3. On successful insert, the pending record is automatically deleted from `pending_ipos`.
+4. Click **Reject** to remove a pending record without adding it.
+
+**`pending_ipos` table schema** (must be created manually in Supabase):
+```sql
+CREATE TABLE pending_ipos (
+  id          BIGSERIAL PRIMARY KEY,
+  company_name TEXT NOT NULL,
+  cik          TEXT NOT NULL,
+  effect_date  DATE NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'pending',
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(cik)
+);
+```
+The `UNIQUE(cik)` constraint + `Prefer: resolution=ignore-duplicates` header means re-running the scraper for the same date is safe.
+
+**Additional GitHub secrets required:** `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`
+
+---
+
 ## EDGAR EFFECT scraper (`edgar_scraper.py`)
 
 Queries `https://efts.sec.gov/LATEST/search-index` with `forms=EFFECT` for a date range, paginates in batches of 100. For each hit, calls the EDGAR submissions API to get company metadata. Filters to **SIC 6770** (blank check / SPAC) only. Sends an HTML email; skips the email if no SPACs filed that day.

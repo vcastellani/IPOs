@@ -26,6 +26,9 @@ EDGAR_SEARCH_URL = "https://efts.sec.gov/LATEST/search-index"
 EDGAR_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{}.json"
 EDGAR_FILING_BASE = "https://www.sec.gov/edgar/browse/?CIK={}"
 
+SUPABASE_URL         = os.environ.get("SUPABASE_URL", "")
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+
 HEADERS = {
     "User-Agent": os.environ.get(
         "EDGAR_USER_AGENT", "IPOTracker/1.0 research@example.com"
@@ -68,6 +71,44 @@ CATEGORY_ORDER = {
 # ---------------------------------------------------------------------------
 # Data fetching
 # ---------------------------------------------------------------------------
+
+def push_pending_to_supabase(spacs: list[dict]) -> None:
+    """Insert SPAC EFFECT filings into the pending_ipos Supabase table.
+    Uses ignore-duplicates so re-runs are safe (cik is unique in the table).
+    Requires SUPABASE_URL and SUPABASE_SERVICE_KEY env vars.
+    """
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        log.info("SUPABASE_URL / SUPABASE_SERVICE_KEY not set — skipping pending queue push.")
+        return
+
+    rows = [
+        {
+            "company_name": f["company"],
+            "cik":          f["cik"],
+            "effect_date":  f["file_date"],
+        }
+        for f in spacs
+        if f.get("cik") and f.get("file_date")
+    ]
+    if not rows:
+        return
+
+    url = SUPABASE_URL.rstrip("/") + "/rest/v1/pending_ipos"
+    headers = {
+        "apikey":        SUPABASE_SERVICE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+        "Content-Type":  "application/json",
+        "Prefer":        "resolution=ignore-duplicates,return=minimal",
+    }
+    try:
+        resp = requests.post(url, json=rows, headers=headers, timeout=15)
+        if resp.status_code in (200, 201):
+            log.info("Pushed %d SPAC(s) to pending_ipos queue.", len(rows))
+        else:
+            log.warning("Failed to push to pending_ipos: HTTP %d — %s", resp.status_code, resp.text[:200])
+    except Exception as exc:
+        log.warning("Error pushing to pending_ipos: %s", exc)
+
 
 def get_previous_business_day() -> date:
     today = date.today()
@@ -381,6 +422,8 @@ def process_one_day(filing_date: date) -> None:
     filings.sort(key=lambda f: (CATEGORY_ORDER.get(f["category"], 99), f["company"]))
 
     spac_count = sum(1 for f in filings if f["sic"] == "6770")
+    spac_filings = [f for f in filings if f["sic"] == "6770"]
+    push_pending_to_supabase(spac_filings)
     if spac_count == 0:
         log.info("No SPAC filings (SIC 6770) found for %s — skipping email.", filing_date)
         return

@@ -67,6 +67,21 @@ def load_ipos() -> pd.DataFrame:
     return pd.DataFrame(resp.data)
 
 @st.cache_data(ttl=60)
+def load_pending_ipos() -> pd.DataFrame:
+    resp = (
+        service_client()
+        .table("pending_ipos")
+        .select("*")
+        .eq("status", "pending")
+        .order("created_at", desc=True)
+        .execute()
+    )
+    if not resp.data:
+        return pd.DataFrame()
+    return pd.DataFrame(resp.data)
+
+
+@st.cache_data(ttl=60)
 def load_watchlist() -> pd.DataFrame:
     resp = (
         anon_client()
@@ -1096,7 +1111,7 @@ if not df.empty:
 if st.session_state.is_admin:
     st.divider()
     st.subheader("Admin Panel")
-    tab_add, tab_edit, tab_verify = st.tabs(["Add New Entry", "Edit / Delete", "IPO Verification"])
+    tab_add, tab_edit, tab_verify, tab_pending = st.tabs(["Add New Entry", "Edit / Delete", "IPO Verification", "Pending Queue"])
 
     # ── Add ───────────────────────────────────────────────────────────────────
     with tab_add:
@@ -1360,6 +1375,13 @@ if st.session_state.is_admin:
                         "filings":                initial_filings,
                     }
                     service_client().table("ipos").insert(new_row).execute()
+                    # If this came from the pending queue, remove it
+                    if st.session_state.get("pending_approve_id"):
+                        try:
+                            service_client().table("pending_ipos").delete().eq("id", st.session_state.pending_approve_id).execute()
+                        except Exception:
+                            pass
+                        st.session_state.pop("pending_approve_id", None)
                     st.success(f"Added {a_name}!")
                     refresh()
                     st.session_state.pop("prefill_424b4", None)
@@ -1619,6 +1641,97 @@ if st.session_state.is_admin:
                         st.rerun()
                     else:
                         st.error("URL is required.")
+
+    # ── Pending Queue ─────────────────────────────────────────────────────────
+    with tab_pending:
+        pending_df = load_pending_ipos()
+
+        if pending_df.empty:
+            st.info("No SPACs in the pending queue. They will appear here automatically when the EDGAR scraper runs and finds new SIC 6770 filings.")
+        else:
+            st.info(f"**{len(pending_df)} SPAC(s)** waiting for review.")
+
+            p_options = {
+                f"{r['company_name']}  (CIK {r['cik']})": r["id"]
+                for _, r in pending_df.iterrows()
+            }
+            p_sel_label = st.selectbox("Select SPAC to review", list(p_options.keys()), key="pending_select")
+            p_id   = p_options[p_sel_label]
+            p_row  = pending_df[pending_df["id"] == p_id].iloc[0].to_dict()
+
+            pi1, pi2, pi3 = st.columns(3)
+            with pi1:
+                st.metric("CIK", p_row["cik"])
+            with pi2:
+                st.metric("EFFECT Date", str(p_row["effect_date"]))
+            with pi3:
+                _found = pd.to_datetime(p_row.get("created_at")).strftime("%b %d, %Y") if p_row.get("created_at") else "—"
+                st.metric("Found", _found)
+
+            pc1, pc2, pc3 = st.columns([3, 1, 1])
+            with pc1:
+                if st.button("Extract from EDGAR & Load into Add Form", key="pending_extract", use_container_width=True, type="primary"):
+                    with st.spinner("Looking up EDGAR filings…"):
+                        try:
+                            urls = find_edgar_urls(p_row["cik"], str(p_row["effect_date"]))
+                            pf_url = urls["prospectus_url"]
+                            data   = extract_from_424b4(pf_url)
+                            data["prospectus_url"] = pf_url
+                            data["s1_url"]         = urls.get("s1_url")
+                            data["ipo_8k_url"]     = urls.get("ipo_8k_url")
+                            data["tenk_urls"]      = urls.get("tenk_urls", [])
+                            if urls.get("ipo_8k_url"):
+                                try:
+                                    k8_data = extract_from_8k(urls["ipo_8k_url"])
+                                    for k, v in k8_data.items():
+                                        if v is not None and not data.get(k):
+                                            data[k] = v
+                                    if data.get("overallotment_exercised") and not data.get("overallotment_exercised_date"):
+                                        data["overallotment_exercised_date"] = data.get("ipo_date")
+                                except Exception:
+                                    pass
+                            cik_int = int(p_row["cik"])
+                            data["cik"]            = f"{cik_int:010d}"
+                            data["company_name"]   = data.get("company_name") or p_row["company_name"]
+                            data["effective_date"] = str(p_row["effect_date"])
+                            data["edgar_url"]      = f"https://www.sec.gov/edgar/browse/?CIK={cik_int:010d}"
+                            if data.get("audit_report_date") and not data.get("audit_partner_id"):
+                                with st.spinner("Looking up PCAOB audit partner…"):
+                                    _pid, _ = lookup_audit_partner(p_row["cik"], data["audit_report_date"])
+                                    data["audit_partner_id"] = _pid
+                            st.session_state.prefill_424b4        = data
+                            st.session_state.pending_approve_id   = p_id
+                            if data.get("securities_type") in SECURITY_TYPES:
+                                st.session_state["prefill_sec_type_pending"] = data["securities_type"]
+                            st.success("Extracted! Switch to the **Add New Entry** tab to review and submit.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Extraction failed: {e}")
+            with pc2:
+                st.link_button("EDGAR Profile", f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={p_row['cik']}", use_container_width=True)
+            with pc3:
+                if st.button("Reject", key="pending_reject", use_container_width=True):
+                    service_client().table("pending_ipos").delete().eq("id", p_id).execute()
+                    refresh()
+                    st.rerun()
+
+            st.divider()
+            st.caption("Full pending queue:")
+            _pdf_display = pending_df[["company_name", "cik", "effect_date", "created_at"]].copy()
+            _pdf_display["created_at"] = pd.to_datetime(_pdf_display["created_at"])
+            st.dataframe(
+                _pdf_display.rename(columns={
+                    "company_name": "Company",
+                    "cik":          "CIK",
+                    "effect_date":  "EFFECT Date",
+                    "created_at":   "Found",
+                }),
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "Found": st.column_config.DatetimeColumn("Found", format="MMM D, YYYY"),
+                },
+            )
 
     # ── Verify 10-K ──────────────────────────────────────────────────────────
     # NOTE: requires a 'verified' boolean column (default false) in the ipos table
