@@ -456,32 +456,223 @@ def extract_from_8k(url: str) -> dict:
         return {}
 
 def _extract_registered_securities(raw_html: str) -> str:
-    """Parse the Section 12(b) registered securities table from raw 10-K HTML.
-    Returns pipe-delimited rows: security description | ticker | exchange
+    """Extract the Section 12(b) registered securities block from a 10-K.
+    Tries HTML table parsing first; falls back to stripped-text extraction.
     """
+    # ── Attempt 1: parse <table> structure ────────────────────────────────
     lower_html = raw_html.lower()
     idx = lower_html.find("section 12(b)")
     if idx == -1:
         idx = lower_html.find("trading symbol")
-    if idx == -1:
+    if idx != -1:
+        table_start = raw_html.find("<table", idx)
+        if table_start != -1:
+            table_end = raw_html.find("</table>", table_start)
+            if table_end != -1:
+                table_html = raw_html[table_start: table_end + 8]
+                rows = re.findall(r"<tr[^>]*>(.*?)</tr>", table_html, re.DOTALL | re.IGNORECASE)
+                lines = []
+                for row in rows:
+                    cells = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.DOTALL | re.IGNORECASE)
+                    cells = [re.sub(r"<[^>]+>", " ", c) for c in cells]
+                    cells = [re.sub(r"\s+", " ", c).strip() for c in cells]
+                    cells = [c for c in cells if c and c.strip("\xa0")]
+                    if len(cells) >= 2:
+                        lines.append(" | ".join(cells))
+                if len(lines) >= 2:  # at least header + one data row
+                    return "\n".join(lines)
+
+    # ── Fallback: extract the 12(b) text block from stripped HTML ─────────
+    stripped = re.sub(r"<[^>]+>", " ", raw_html)
+    stripped = re.sub(r"\s+", " ", stripped).strip()
+    lower_s = stripped.lower()
+
+    start = lower_s.find("section 12(b)")
+    if start == -1:
+        start = lower_s.find("trading symbol")
+    if start == -1:
         return ""
-    table_start = raw_html.find("<table", idx)
-    if table_start == -1:
+
+    end = lower_s.find("section 12(g)", start + 10)
+    block = stripped[start: end + 50 if end != -1 else start + 2500]
+    return block[:2500]
+
+
+def _parse_tickers_from_sec12b(sec12b_text: str) -> dict:
+    """Regex-based ticker extraction from Section 12(b) block; bypasses Claude.
+    Returns a dict with any of: ticker, ticker_units, ticker_warrants, ticker_rights, exchange.
+    """
+    if not sec12b_text:
+        return {}
+
+    result: dict = {}
+
+    def _exch(raw: str) -> str:
+        r = raw.lower()
+        if "nasdaq" in r:
+            return "NASDAQ"
+        if "amex" in r or "american" in r:
+            return "AMEX"
+        if "nyse" in r or "new york" in r:
+            return "NYSE"
         return ""
-    table_end = raw_html.find("</table>", table_start)
-    if table_end == -1:
+
+    def _kind(desc: str) -> str:
+        d = desc.lower()
+        if "unit" in d:
+            return "units"
+        if "warrant" in d:
+            return "warrants"
+        if "right" in d:
+            return "rights"
+        if any(k in d for k in ("common stock", "ordinary share", "class a", "class b", "share", "stock")):
+            return "common"
         return ""
-    table_html = raw_html[table_start: table_end + 8]
-    rows = re.findall(r"<tr[^>]*>(.*?)</tr>", table_html, re.DOTALL | re.IGNORECASE)
-    lines = []
-    for row in rows:
-        cells = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.DOTALL | re.IGNORECASE)
-        cells = [re.sub(r"<[^>]+>", " ", c) for c in cells]
-        cells = [re.sub(r"\s+", " ", c).strip() for c in cells]
-        cells = [c for c in cells if c and c not in (" ", "\xa0")]
-        if len(cells) >= 2:
-            lines.append(" | ".join(cells))
-    return "\n".join(lines)
+
+    if "|" in sec12b_text:
+        for line in sec12b_text.splitlines():
+            parts = [p.strip() for p in line.split("|")]
+            if len(parts) < 2:
+                continue
+            desc, ticker = parts[0], parts[1]
+            exch_raw = parts[2] if len(parts) > 2 else ""
+            if not ticker or not re.match(r"^[A-Z]", ticker):
+                continue
+            if ticker.lower() in ("trading symbol", "trading symbol(s)", "symbol", "ticker"):
+                continue
+            if not result.get("exchange") and exch_raw:
+                e = _exch(exch_raw)
+                if e:
+                    result["exchange"] = e
+            k = _kind(desc)
+            if k == "units":
+                result.setdefault("ticker_units", ticker)
+            elif k == "warrants":
+                result.setdefault("ticker_warrants", ticker)
+            elif k == "rights":
+                result.setdefault("ticker_rights", ticker)
+            elif k == "common":
+                result.setdefault("ticker", ticker)
+    else:
+        _EXCH_RE = r"(?:NASDAQ(?:\s+(?:CAPITAL\s+MARKET|GLOBAL\s+(?:SELECT\s+)?MARKET))?|NYSE(?:\s+(?:AMERICAN|ARCA|MKT))?|AMEX)"
+        _TICK_RE = r"([A-Z]{3,7}(?:\s[A-Z]{1,3})?)"
+        for m in re.finditer(_TICK_RE + r"\s+" + _EXCH_RE, sec12b_text):
+            ticker = m.group(1)
+            exch_raw = sec12b_text[m.start(): m.end()]
+            before = sec12b_text[max(0, m.start() - 150): m.start()]
+            if not result.get("exchange"):
+                e = _exch(exch_raw)
+                if e:
+                    result["exchange"] = e
+            k = _kind(before)
+            if k == "units":
+                result.setdefault("ticker_units", ticker)
+            elif k == "warrants":
+                result.setdefault("ticker_warrants", ticker)
+            elif k == "rights":
+                result.setdefault("ticker_rights", ticker)
+            elif k == "common":
+                result.setdefault("ticker", ticker)
+
+    return result
+
+
+def _parse_tickers_from_xbrl(raw_html: str) -> dict:
+    """Extract tickers from iXBRL dei:TradingSymbol elements via StatementClassOfStockAxis context.
+    Returns a dict with any of: ticker, ticker_units, ticker_warrants, ticker_rights, exchange.
+    Falls back to ticker suffix classification when no axis context is found.
+    """
+    result: dict = {}
+    _ATTR_RE = re.compile(r'([\w:]+)\s*=\s*["\']([^"\']*)["\']')
+
+    # ── Step 1: collect contextRef → ticker from dei:TradingSymbol elements ──
+    tickers_by_ctx: dict[str, str] = {}
+    for m in re.finditer(
+        r'<ix:nonNumeric\b([^>]+)>([^<]*)</ix:nonNumeric>',
+        raw_html, re.IGNORECASE | re.DOTALL
+    ):
+        attrs = {k.lower(): v for k, v in _ATTR_RE.findall(m.group(1))}
+        if attrs.get("name", "").lower() != "dei:tradingsymbol":
+            continue
+        ticker = m.group(2).strip()
+        ctx = attrs.get("contextref", "")
+        if ticker and ctx:
+            tickers_by_ctx[ctx] = ticker
+
+    if not tickers_by_ctx:
+        return {}
+
+    # ── Step 2: classify each context by its StatementClassOfStockAxis member ──
+    def _member_kind(raw: str) -> str:
+        m = raw.lower().split(":")[-1]
+        if "unit" in m:
+            return "units"
+        if "warrant" in m:
+            return "warrants"
+        if "right" in m:
+            return "rights"
+        if any(k in m for k in ("classa", "classb", "commonstock", "ordinaryshare",
+                                  "commonshare", "classacommon", "classbcommon")):
+            return "common"
+        return "other"
+
+    def _suffix_kind(ticker: str) -> str:
+        t = ticker.upper().replace(" ", "")
+        if t.endswith("U"):
+            return "units"
+        if t.endswith(("WS", "WT", "W")):
+            return "warrants"
+        if t.endswith("R") and len(t) > 4:
+            return "rights"
+        return "common"
+
+    ctx_to_kind: dict[str, str] = {}
+    for cm in re.finditer(
+        r'<xbrli:context\b[^>]*\bid\s*=\s*["\']([^"\']+)["\'][^>]*>(.*?)</xbrli:context>',
+        raw_html, re.IGNORECASE | re.DOTALL
+    ):
+        ctx_id, ctx_body = cm.group(1), cm.group(2)
+        am = re.search(
+            r'dimension\s*=\s*["\'][^"\']*StatementClassOfStockAxis["\'][^>]*>\s*([^\s<]+)',
+            ctx_body, re.IGNORECASE
+        )
+        ctx_to_kind[ctx_id] = _member_kind(am.group(1)) if am else "other"
+
+    # ── Step 3: assign tickers to result fields ──
+    def _assign(kind: str, ticker: str) -> None:
+        if kind == "units":
+            result.setdefault("ticker_units", ticker)
+        elif kind == "warrants":
+            result.setdefault("ticker_warrants", ticker)
+        elif kind == "rights":
+            result.setdefault("ticker_rights", ticker)
+        else:
+            result.setdefault("ticker", ticker)
+
+    for ctx_ref, ticker in tickers_by_ctx.items():
+        kind = ctx_to_kind.get(ctx_ref, "other")
+        if kind == "other":
+            kind = _suffix_kind(ticker)
+        _assign(kind, ticker)
+
+    # ── Step 4: exchange from dei:SecurityExchangeName ──
+    for em in re.finditer(
+        r'<ix:nonNumeric\b([^>]+)>([^<]+)</ix:nonNumeric>',
+        raw_html, re.IGNORECASE | re.DOTALL
+    ):
+        attrs = {k.lower(): v for k, v in _ATTR_RE.findall(em.group(1))}
+        if attrs.get("name", "").lower() != "dei:securityexchangename":
+            continue
+        exch = em.group(2).strip().upper()
+        if "NASDAQ" in exch:
+            result["exchange"] = "NASDAQ"
+        elif "AMEX" in exch or "AMERICAN" in exch:
+            result["exchange"] = "AMEX"
+        elif "NYSE" in exch:
+            result["exchange"] = "NYSE"
+        break
+
+    return result
 
 
 def extract_from_10k(url: str) -> dict:
@@ -536,7 +727,7 @@ def extract_from_10k(url: str) -> dict:
             break
     ticker_excerpt = text[_item5_idx: _item5_idx + 3000] if _item5_idx != -1 else ""
 
-    _debug_info = {"anchor": _matched_anchor, "idx": idx, "excerpt_start": excerpt[:300]}
+    _debug_info = {"anchor": _matched_anchor, "idx": idx, "excerpt_start": excerpt[:300], "sec12b": sec12b_text[:400]}
 
     prompt = (
         "Extract these fields from the IPO section of a SPAC 10-K annual report. "
@@ -618,6 +809,24 @@ def extract_from_10k(url: str) -> dict:
         raw = re.sub(r"\s*```$", "", raw.strip())
     try:
         result = json.loads(raw)
+
+        # Override Claude's ticker fields: try iXBRL dei:TradingSymbol first,
+        # fall back to Section 12(b) regex if the filing lacks XBRL tags.
+        _xbrl_tickers = _parse_tickers_from_xbrl(resp.text)
+        _fallback_tickers = _parse_tickers_from_sec12b(sec12b_text) if not _xbrl_tickers else {}
+        _ticker_override = _xbrl_tickers or _fallback_tickers
+        for _field in ("ticker", "ticker_units", "ticker_warrants", "ticker_rights", "exchange"):
+            if _ticker_override.get(_field):
+                result[_field] = _ticker_override[_field]
+        _debug_info["xbrl_tickers"] = _xbrl_tickers
+        _debug_info["fallback_tickers"] = _fallback_tickers
+
+        # When OA was exercised simultaneously with IPO, default the date to ipo_date
+        if (result.get("overallotment_exercised")
+                and not result.get("overallotment_exercised_date")
+                and result.get("ipo_date")):
+            result["overallotment_exercised_date"] = result["ipo_date"]
+
         result["_debug"] = _debug_info
         return result
     except json.JSONDecodeError:
@@ -1489,6 +1698,8 @@ if st.session_state.is_admin:
                     _dbg = _ext.pop("_debug", {})
                     with st.expander("Debug info"):
                         st.write(f"**Anchor matched:** `{_dbg.get('anchor')}`  |  **Position:** {_dbg.get('idx')}")
+                        st.write("**Section 12(b) extracted (first 400 chars):**")
+                        st.code(_dbg.get("sec12b", ""), language=None)
                         st.write("**Excerpt start (first 300 chars):**")
                         st.code(_dbg.get("excerpt_start", ""), language=None)
                         st.write("**Claude raw response:**")
