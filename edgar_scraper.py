@@ -444,9 +444,16 @@ def main() -> None:
     end_str   = os.environ.get("EDGAR_END_DATE",   "").strip()
     date_str  = os.environ.get("EDGAR_DATE",        "").strip()
 
+    def _parse(s: str, var: str):
+        try:
+            return datetime.strptime(s, "%Y-%m-%d").date()
+        except ValueError:
+            log.error("%s=%r is not a valid YYYY-MM-DD date.", var, s)
+            raise SystemExit(1)
+
     if start_str and end_str:
-        start = datetime.strptime(start_str, "%Y-%m-%d").date()
-        end   = datetime.strptime(end_str,   "%Y-%m-%d").date()
+        start = _parse(start_str, "EDGAR_START_DATE")
+        end   = _parse(end_str,   "EDGAR_END_DATE")
         if start > end:
             log.error("EDGAR_START_DATE must be before or equal to EDGAR_END_DATE.")
             return
@@ -457,8 +464,7 @@ def main() -> None:
             if i < len(days) - 1:
                 time.sleep(2)
     elif date_str:
-        filing_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-        process_one_day(filing_date)
+        process_one_day(_parse(date_str, "EDGAR_DATE"))
     else:
         process_one_day(get_previous_business_day())
 
