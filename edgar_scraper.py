@@ -83,9 +83,11 @@ def push_pending_to_supabase(spacs: list[dict]) -> None:
 
     rows = [
         {
-            "company_name": f["company"],
-            "cik":          f["cik"],
-            "effect_date":  f["file_date"],
+            "company_name":    f["company"],
+            "cik":             f["cik"],
+            "effect_date":     f["file_date"],
+            "is_first_effect": f.get("effect_count", 0) <= 1,
+            "edgar_url":       f.get("edgar_url", ""),
         }
         for f in spacs
         if f.get("cik") and f.get("file_date")

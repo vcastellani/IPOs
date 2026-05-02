@@ -68,6 +68,23 @@ def load_ipos() -> pd.DataFrame:
 
 @st.cache_data(ttl=60)
 def load_pending_ipos() -> pd.DataFrame:
+    """Approved records waiting for full extraction (Pending Queue tab)."""
+    resp = (
+        service_client()
+        .table("pending_ipos")
+        .select("*")
+        .eq("status", "approved")
+        .order("created_at", desc=True)
+        .execute()
+    )
+    if not resp.data:
+        return pd.DataFrame()
+    return pd.DataFrame(resp.data)
+
+
+@st.cache_data(ttl=60)
+def load_new_filings() -> pd.DataFrame:
+    """Raw EDGAR hits awaiting human triage (New Filings tab)."""
     resp = (
         service_client()
         .table("pending_ipos")
@@ -1111,7 +1128,7 @@ if not df.empty:
 if st.session_state.is_admin:
     st.divider()
     st.subheader("Admin Panel")
-    tab_add, tab_edit, tab_verify, tab_pending = st.tabs(["Add New Entry", "Edit / Delete", "IPO Verification", "Pending Queue"])
+    tab_add, tab_edit, tab_verify, tab_new, tab_pending = st.tabs(["Add New Entry", "Edit / Delete", "IPO Verification", "New Filings", "Pending Queue"])
 
     # ── Add ───────────────────────────────────────────────────────────────────
     with tab_add:
@@ -1641,6 +1658,52 @@ if st.session_state.is_admin:
                         st.rerun()
                     else:
                         st.error("URL is required.")
+
+    # ── New Filings ───────────────────────────────────────────────────────────
+    with tab_new:
+        nf_df = load_new_filings()
+
+        if nf_df.empty:
+            st.info("No new SPAC filings awaiting review. They will appear here automatically when the EDGAR scraper runs.")
+        else:
+            # Filter out CIKs already in the ipos table
+            existing_ciks = set()
+            _ipo_df = load_ipos()
+            if not _ipo_df.empty and "cik" in _ipo_df.columns:
+                existing_ciks = {str(int(c)) for c in _ipo_df["cik"].dropna() if str(c).strip()}
+
+            nf_df["_cik_int"] = nf_df["cik"].apply(lambda c: str(int(c)) if str(c).strip() else "")
+            nf_df = nf_df[~nf_df["_cik_int"].isin(existing_ciks)].drop(columns=["_cik_int"])
+
+            if nf_df.empty:
+                st.success("All detected SPACs are already in the database.")
+            else:
+                st.info(f"**{len(nf_df)} new SPAC filing(s)** detected on EDGAR. Review each one and approve or remove it.")
+
+                # Column headers
+                hc = st.columns([3, 1, 1, 1, 1, 1])
+                hc[0].markdown("**Company**")
+                hc[1].markdown("**CIK**")
+                hc[2].markdown("**EFFECT Date**")
+                hc[3].markdown("**1st Filing?**")
+                hc[4].markdown("")
+                hc[5].markdown("")
+                st.divider()
+
+                for _, row in nf_df.iterrows():
+                    rc = st.columns([3, 1, 1, 1, 1, 1])
+                    rc[0].write(row["company_name"])
+                    rc[1].write(row["cik"])
+                    rc[2].write(str(row["effect_date"]))
+                    first_label = "✓ Yes" if row.get("is_first_effect") else "—"
+                    first_color = "green" if row.get("is_first_effect") else "gray"
+                    rc[3].markdown(f":{first_color}[{first_label}]")
+                    if row.get("edgar_url"):
+                        rc[4].link_button("EDGAR ↗", row["edgar_url"], use_container_width=True)
+                    if rc[5].button("Remove", key=f"nf_remove_{row['id']}", use_container_width=True):
+                        service_client().table("pending_ipos").delete().eq("id", int(row["id"])).execute()
+                        refresh()
+                        st.rerun()
 
     # ── Pending Queue ─────────────────────────────────────────────────────────
     with tab_pending:

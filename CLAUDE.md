@@ -140,12 +140,14 @@ When the EDGAR scraper finds new SPAC filings it now also writes them to a `pend
 **`pending_ipos` table schema** (must be created manually in Supabase):
 ```sql
 CREATE TABLE pending_ipos (
-  id          BIGSERIAL PRIMARY KEY,
-  company_name TEXT NOT NULL,
-  cik          TEXT NOT NULL,
-  effect_date  DATE NOT NULL,
-  status       TEXT NOT NULL DEFAULT 'pending',
-  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  id               BIGSERIAL PRIMARY KEY,
+  company_name     TEXT NOT NULL,
+  cik              TEXT NOT NULL,
+  effect_date      DATE NOT NULL,
+  status           TEXT NOT NULL DEFAULT 'pending',
+  is_first_effect  BOOLEAN,
+  edgar_url        TEXT,
+  created_at       TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(cik)
 );
 ```
