@@ -39,8 +39,18 @@ jobs:
       - name: Compute previous month date range
         if: github.event_name == 'schedule' || (github.event.inputs.start_date == '' && github.event.inputs.end_date == '' && github.event.inputs.date == '')
         run: |
-          echo "EDGAR_START_DATE=$(date -d "$(date +%Y-%m-01) -1 month" +%Y-%m-%d)" >> $GITHUB_ENV
-          echo "EDGAR_END_DATE=$(date -d "$(date +%Y-%m-01) -1 day" +%Y-%m-%d)" >> $GITHUB_ENV
+          python3 - <<'EOF'
+          import os
+          from datetime import date, timedelta
+          today = date.today()
+          first_of_month = today.replace(day=1)
+          end   = first_of_month - timedelta(days=1)
+          start = end.replace(day=1)
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"EDGAR_START_DATE={start}\n")
+              f.write(f"EDGAR_END_DATE={end}\n")
+          print(f"Computed range: {start} → {end}")
+          EOF
 
       - name: Run EDGAR scraper
         env:
