@@ -202,7 +202,7 @@ def push_pending_to_supabase(spacs: list[dict]) -> None:
     Uses ignore-duplicates so re-runs are safe (cik is unique in the table).
     """
     if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
-        log.info("SUPABASE_URL / SUPABASE_SERVICE_KEY not set — skipping pending queue push.")
+        log.warning("SUPABASE_URL / SUPABASE_SERVICE_KEY not set — skipping pending queue push.")
         return
 
     rows = [
@@ -219,7 +219,7 @@ def push_pending_to_supabase(spacs: list[dict]) -> None:
     if not rows:
         return
 
-    url = SUPABASE_URL.rstrip("/") + "/rest/v1/pending_ipos"
+    url = SUPABASE_URL.rstrip("/") + "/rest/v1/pending_ipos?on_conflict=cik"
     headers = {
         "apikey":        SUPABASE_SERVICE_KEY,
         "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
@@ -228,7 +228,7 @@ def push_pending_to_supabase(spacs: list[dict]) -> None:
     }
     try:
         resp = requests.post(url, json=rows, headers=headers, timeout=15)
-        if resp.status_code in (200, 201):
+        if resp.status_code in (200, 201, 204):
             log.info("Pushed %d SPAC(s) to pending_ipos queue.", len(rows))
         else:
             log.warning("Failed to push to pending_ipos: HTTP %d — %s", resp.status_code, resp.text[:200])
