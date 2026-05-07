@@ -1,7 +1,8 @@
 """
 EDGAR EFFECT Filing Scraper
-Fetches daily EFFECT filings (IPO/SEO/SPAC/REIT registrations becoming effective)
-and emails a formatted summary.
+Fetches all SPAC EFFECT filings for a calendar month and emails a summary.
+Runs on the 1st of each month, covering the month two calendar months prior
+(e.g. June 1 → processes April; July 1 → processes May).
 """
 
 import os
@@ -22,9 +23,9 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-EDGAR_SEARCH_URL = "https://efts.sec.gov/LATEST/search-index"
+EDGAR_SEARCH_URL     = "https://efts.sec.gov/LATEST/search-index"
 EDGAR_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{}.json"
-EDGAR_FILING_BASE = "https://www.sec.gov/edgar/browse/?CIK={}"
+EDGAR_FILING_BASE    = "https://www.sec.gov/edgar/browse/?CIK={}"
 
 SUPABASE_URL         = os.environ.get("SUPABASE_URL", "")
 SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
@@ -38,101 +39,40 @@ HEADERS = {
 }
 
 FORM_CATEGORIES = {
-    "S-1": "IPO",
-    "S-1/A": "IPO",
-    "F-1": "IPO (Foreign)",
-    "F-1/A": "IPO (Foreign)",
-    "S-11": "REIT IPO",
-    "S-11/A": "REIT IPO",
-    "S-3": "SEO / Shelf",
-    "S-3/A": "SEO / Shelf",
-    "S-3ASR": "SEO / Shelf",
-    "S-4": "Merger / SPAC",
-    "S-4/A": "Merger / SPAC",
-    "F-3": "SEO / Shelf (Foreign)",
-    "F-3/A": "SEO / Shelf (Foreign)",
-    "F-4": "Merger (Foreign)",
-    "F-4/A": "Merger (Foreign)",
+    "S-1": "IPO", "S-1/A": "IPO",
+    "F-1": "IPO (Foreign)", "F-1/A": "IPO (Foreign)",
+    "S-11": "REIT IPO", "S-11/A": "REIT IPO",
+    "S-3": "SEO / Shelf", "S-3/A": "SEO / Shelf", "S-3ASR": "SEO / Shelf",
+    "S-4": "Merger / SPAC", "S-4/A": "Merger / SPAC",
+    "F-3": "SEO / Shelf (Foreign)", "F-3/A": "SEO / Shelf (Foreign)",
+    "F-4": "Merger (Foreign)", "F-4/A": "Merger (Foreign)",
 }
 
-CATEGORY_ORDER = {
-    "IPO": 0,
-    "IPO (Foreign)": 1,
-    "REIT IPO": 2,
-    "SEO / Shelf": 3,
-    "SEO / Shelf (Foreign)": 4,
-    "Merger / SPAC": 5,
-    "Merger (Foreign)": 6,
-    "Other": 7,
-    "Unknown": 8,
-}
+
+# ---------------------------------------------------------------------------
+# Date helpers
+# ---------------------------------------------------------------------------
+
+def _default_month() -> tuple[date, date]:
+    """Return the first and last day of the month two calendar months ago."""
+    today = date.today()
+    first_this  = today.replace(day=1)
+    last_prev   = first_this - timedelta(days=1)
+    first_prev  = last_prev.replace(day=1)
+    last_target = first_prev - timedelta(days=1)
+    first_target = last_target.replace(day=1)
+    return first_target, last_target
 
 
 # ---------------------------------------------------------------------------
 # Data fetching
 # ---------------------------------------------------------------------------
 
-def push_pending_to_supabase(spacs: list[dict]) -> None:
-    """Insert SPAC EFFECT filings into the pending_ipos Supabase table.
-    Uses ignore-duplicates so re-runs are safe (cik is unique in the table).
-    Requires SUPABASE_URL and SUPABASE_SERVICE_KEY env vars.
-    """
-    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
-        log.info("SUPABASE_URL / SUPABASE_SERVICE_KEY not set — skipping pending queue push.")
-        return
-
-    rows = [
-        {
-            "company_name":    f["company"],
-            "cik":             f["cik"],
-            "effect_date":     f["file_date"],
-            "is_first_effect": f.get("effect_count", 0) <= 1,
-            "edgar_url":       f.get("edgar_url", ""),
-        }
-        for f in spacs
-        if f.get("cik") and f.get("file_date")
-    ]
-    if not rows:
-        return
-
-    url = SUPABASE_URL.rstrip("/") + "/rest/v1/pending_ipos"
-    headers = {
-        "apikey":        SUPABASE_SERVICE_KEY,
-        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
-        "Content-Type":  "application/json",
-        "Prefer":        "resolution=ignore-duplicates,return=minimal",
-    }
-    try:
-        resp = requests.post(url, json=rows, headers=headers, timeout=15)
-        if resp.status_code in (200, 201):
-            log.info("Pushed %d SPAC(s) to pending_ipos queue.", len(rows))
-        else:
-            log.warning("Failed to push to pending_ipos: HTTP %d — %s", resp.status_code, resp.text[:200])
-    except Exception as exc:
-        log.warning("Error pushing to pending_ipos: %s", exc)
-
-
-def get_previous_business_day() -> date:
-    today = date.today()
-    if today.weekday() == 0:
-        return today - timedelta(days=3)
-    return today - timedelta(days=1)
-
-
-def business_days_in_range(start: date, end: date) -> list[date]:
-    """Return all weekdays (Mon–Fri) between start and end inclusive."""
-    days = []
-    current = start
-    while current <= end:
-        if current.weekday() < 5:
-            days.append(current)
-        current += timedelta(days=1)
-    return days
-
-
-def fetch_effect_filings(filing_date: date) -> list[dict]:
-    date_str = filing_date.strftime("%Y-%m-%d")
-    log.info("Fetching EFFECT filings for %s", date_str)
+def fetch_effect_filings(start_date: date, end_date: date) -> list[dict]:
+    """Fetch all EFFECT filings between start_date and end_date inclusive."""
+    start_str = start_date.strftime("%Y-%m-%d")
+    end_str   = end_date.strftime("%Y-%m-%d")
+    log.info("Fetching EFFECT filings from %s to %s", start_str, end_str)
 
     filings: list[dict] = []
     from_idx = 0
@@ -144,8 +84,8 @@ def fetch_effect_filings(filing_date: date) -> list[dict]:
                 params={
                     "forms": "EFFECT",
                     "dateRange": "custom",
-                    "startdt": date_str,
-                    "enddt": date_str,
+                    "startdt": start_str,
+                    "enddt": end_str,
                     "from": from_idx,
                     "size": 100,
                 },
@@ -187,13 +127,13 @@ def get_company_info(cik: str) -> dict:
     try:
         resp = requests.get(url, headers=HEADERS, timeout=15)
         resp.raise_for_status()
-        data = resp.json()
+        data   = resp.json()
         recent = data.get("filings", {}).get("recent", {})
-        forms = recent.get("form", [])
-        dates = recent.get("filingDate", [])
+        forms  = recent.get("form", [])
+        dates  = recent.get("filingDate", [])
 
         first_filing_date = dates[-1] if dates else ""
-        effect_count = forms.count("EFFECT")
+        effect_count      = forms.count("EFFECT")
 
         category = "Other"
         for form in forms:
@@ -231,56 +171,82 @@ def parse_filings(raw_hits: list[dict]) -> list[dict]:
         company = display_names[0].split("(")[0].strip() if display_names else "N/A"
 
         ciks = src.get("ciks", [])
-        cik = ciks[0].lstrip("0") if ciks else ""
+        cik  = ciks[0].lstrip("0") if ciks else ""
 
-        accession = src.get("adsh", "")
+        accession      = src.get("adsh", "")
         accession_path = accession.replace("-", "")
 
         sics = src.get("sics", [])
-        sic = sics[0] if sics else ""
+        sic  = sics[0] if sics else ""
 
-        parsed.append(
-            {
-                "company": company,
-                "cik": cik,
-                "sic": sic,
-                "accession": accession,
-                "file_date": src.get("file_date", ""),
-                "first_filing_date": "",
-                "filing_url": (
-                    f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_path}/"
-                    if cik and accession_path
-                    else "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=EFFECT"
-                ),
-                "edgar_url": EDGAR_FILING_BASE.format(cik.zfill(10)) if cik else "",
-            }
-        )
+        parsed.append({
+            "company":           company,
+            "cik":               cik,
+            "sic":               sic,
+            "accession":         accession,
+            "file_date":         src.get("file_date", ""),
+            "first_filing_date": "",
+            "effect_count":      0,
+            "filing_url": (
+                f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_path}/"
+                if cik and accession_path
+                else "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=EFFECT"
+            ),
+            "edgar_url": EDGAR_FILING_BASE.format(cik.zfill(10)) if cik else "",
+        })
     return parsed
+
+
+def push_pending_to_supabase(spacs: list[dict]) -> None:
+    """Insert SPAC EFFECT filings into the pending_ipos Supabase table.
+    Uses ignore-duplicates so re-runs are safe (cik is unique in the table).
+    """
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        log.info("SUPABASE_URL / SUPABASE_SERVICE_KEY not set — skipping pending queue push.")
+        return
+
+    rows = [
+        {
+            "company_name":    f["company"],
+            "cik":             f["cik"],
+            "effect_date":     f["file_date"],
+            "is_first_effect": f.get("effect_count", 0) <= 1,
+            "edgar_url":       f.get("edgar_url", ""),
+        }
+        for f in spacs
+        if f.get("cik") and f.get("file_date")
+    ]
+    if not rows:
+        return
+
+    url = SUPABASE_URL.rstrip("/") + "/rest/v1/pending_ipos"
+    headers = {
+        "apikey":        SUPABASE_SERVICE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+        "Content-Type":  "application/json",
+        "Prefer":        "resolution=ignore-duplicates,return=minimal",
+    }
+    try:
+        resp = requests.post(url, json=rows, headers=headers, timeout=15)
+        if resp.status_code in (200, 201):
+            log.info("Pushed %d SPAC(s) to pending_ipos queue.", len(rows))
+        else:
+            log.warning("Failed to push to pending_ipos: HTTP %d — %s", resp.status_code, resp.text[:200])
+    except Exception as exc:
+        log.warning("Error pushing to pending_ipos: %s", exc)
 
 
 # ---------------------------------------------------------------------------
 # Email
 # ---------------------------------------------------------------------------
 
-TABLE_HEADER = (
-    "<table style='width:100%;border-collapse:collapse;font-size:14px;'>"
-    "<thead><tr style='background:#f4f5f7;'>"
-    "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>Company</th>"
-    "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>CIK</th>"
-    "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>SIC</th>"
-    "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>First Filing</th>"
-    "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>1st EFFECT</th>"
-    "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>Accession #</th>"
-    "</tr></thead><tbody>"
-)
 SPAC_TABLE_HEADER = (
     "<table style='width:100%;border-collapse:collapse;font-size:14px;'>"
     "<thead><tr style='background:#f4f5f7;'>"
     "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>Company</th>"
     "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>CIK</th>"
-    "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>SIC</th>"
-    "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>First Filing</th>"
-    "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>1st EFFECT</th>"
+    "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>Filing Date</th>"
+    "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>1st EFFECT?</th>"
     "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>Accession #</th>"
     "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>PCAOB</th>"
     "</tr></thead><tbody>"
@@ -288,85 +254,61 @@ SPAC_TABLE_HEADER = (
 TABLE_FOOTER = "</tbody></table>"
 
 
-def build_row(f: dict, show_pcaob: bool = False) -> str:
-    sic_style = "font-weight:700;color:#b8860b;" if f["sic"] == "6770" else "color:#555;"
-    sic_label = f["sic"] + (" &#9733;" if f["sic"] == "6770" else "")
-    is_first = f.get("effect_count", 0) <= 1
+def build_row(f: dict) -> str:
+    is_first    = f.get("effect_count", 0) <= 1
     first_label = "&#10003; Yes" if is_first else "No"
     first_style = "color:#1a7f3c;font-weight:700;" if is_first else "color:#999;"
-
-    pcaob_cell = ""
-    if show_pcaob and f.get("cik"):
-        pcaob_url = "https://pcaobus.org/resources/auditorsearch/issuers/?issuercik=" + f["cik"]
-        pcaob_cell = (
-            "<td style='padding:8px 12px;border-bottom:1px solid #eee;'>"
-            "<a href='" + pcaob_url + "' style='color:#1a56db;text-decoration:none;font-size:12px;'>View &#8599;</a>"
-            "</td>"
-        )
+    pcaob_url   = "https://pcaobus.org/resources/auditorsearch/issuers/?issuercik=" + f["cik"]
 
     return (
         "<tr>"
         "<td style='padding:8px 12px;border-bottom:1px solid #eee;'>"
         "<a href='" + f["edgar_url"] + "' style='color:#1a56db;text-decoration:none;font-weight:600;'>"
-        + f["company"] +
-        "</a></td>"
+        + f["company"] + "</a></td>"
         "<td style='padding:8px 12px;border-bottom:1px solid #eee;color:#555;'>" + f["cik"] + "</td>"
-        "<td style='padding:8px 12px;border-bottom:1px solid #eee;" + sic_style + "'>" + sic_label + "</td>"
-        "<td style='padding:8px 12px;border-bottom:1px solid #eee;color:#555;font-size:12px;'>" + f["first_filing_date"] + "</td>"
+        "<td style='padding:8px 12px;border-bottom:1px solid #eee;color:#555;font-size:12px;'>" + f["file_date"] + "</td>"
         "<td style='padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;" + first_style + "'>" + first_label + "</td>"
         "<td style='padding:8px 12px;border-bottom:1px solid #eee;'>"
         "<a href='" + f["filing_url"] + "' style='color:#1a56db;text-decoration:none;font-size:12px;'>"
-        + f["accession"] +
-        "</a></td>"
-        + pcaob_cell +
+        + f["accession"] + "</a></td>"
+        "<td style='padding:8px 12px;border-bottom:1px solid #eee;'>"
+        "<a href='" + pcaob_url + "' style='color:#1a56db;text-decoration:none;font-size:12px;'>View &#8599;</a>"
+        "</td>"
         "</tr>"
     )
 
 
-def build_html_email(filings: list[dict], filing_date: date) -> str:
-    date_str = filing_date.strftime("%A, %B %-d, %Y")
-    count = len(filings)
+def build_html_email(spacs: list[dict], start: date, end: date) -> str:
+    month_label = start.strftime("%B %Y")
+    date_range  = f"{start.strftime('%B %-d')} – {end.strftime('%B %-d, %Y')}"
+    count_label = str(len(spacs)) + " SPAC filing" + ("s" if len(spacs) != 1 else "")
+    row_html    = "".join(build_row(f) for f in spacs)
 
-    spacs = [f for f in filings if f["sic"] == "6770"]
-
-    def make_table(rows: list[dict], title: str, subtitle: str, show_pcaob: bool = False) -> str:
-        if not rows:
-            return ""
-        header = SPAC_TABLE_HEADER if show_pcaob else TABLE_HEADER
-        row_html = "".join(build_row(r, show_pcaob=show_pcaob) for r in rows)
-        return (
-            "<h2 style='margin:24px 0 4px;font-size:16px;color:#1a3a6e;'>" + title + "</h2>"
-            "<p style='margin:0 0 12px;font-size:13px;color:#777;'>" + subtitle + "</p>"
-            + header + row_html + TABLE_FOOTER
-        )
-
-    if not spacs:
-        body = "<p style='color:#555;'>No SPAC EFFECT filings (SIC 6770) were found on EDGAR for this date.</p>"
-    else:
-        body = make_table(
-            spacs,
-            "Special Purpose Acquisition Company (SPAC) Filings",
-            "Blank check companies (SIC 6770) — likely SPAC IPOs or follow-on SPAC registrations.",
-            show_pcaob=True,
-        )
-
-    spac_count_label = str(len(spacs)) + " SPAC filing" + ("s" if len(spacs) != 1 else "")
+    body = (
+        "<h2 style='margin:24px 0 4px;font-size:16px;color:#1a3a6e;'>"
+        "Special Purpose Acquisition Company (SPAC) Filings</h2>"
+        "<p style='margin:0 0 12px;font-size:13px;color:#777;'>"
+        "Blank check companies (SIC 6770) — likely SPAC IPOs or follow-on SPAC registrations.</p>"
+        + SPAC_TABLE_HEADER + row_html + TABLE_FOOTER
+    )
 
     return (
         "<!DOCTYPE html><html><head><meta charset='UTF-8'></head>"
-        "<body style='font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:#f9fafb;margin:0;padding:0;'>"
-        "<div style='max-width:900px;margin:32px auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.1);'>"
+        "<body style='font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;"
+        "background:#f9fafb;margin:0;padding:0;'>"
+        "<div style='max-width:900px;margin:32px auto;background:#fff;border-radius:8px;"
+        "overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.1);'>"
         "<div style='background:#1a3a6e;padding:24px 32px;color:#fff;'>"
-        "<h1 style='margin:0;font-size:20px;font-weight:700;'>💸 SPAC IPO Filings</h1>"
-        "<p style='margin:6px 0 0;opacity:0.85;font-size:14px;'>" + date_str + "</p>"
+        "<h1 style='margin:0;font-size:20px;font-weight:700;'>💸 SPAC IPO Filings — " + month_label + "</h1>"
+        "<p style='margin:6px 0 0;opacity:0.85;font-size:14px;'>" + date_range + "</p>"
         "</div>"
         "<div style='padding:24px 32px;'>"
-        "<p style='color:#555;margin:0 0 8px;'><strong>" + spac_count_label + "</strong> found on EDGAR.</p>"
+        "<p style='color:#555;margin:0 0 8px;'><strong>" + count_label + "</strong> found on EDGAR.</p>"
         + body +
         "</div>"
         "<div style='padding:16px 32px;background:#f4f5f7;font-size:12px;color:#888;'>"
-        "Source: <a href='https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&amp;type=EFFECT' style='color:#1a56db;'>SEC EDGAR</a> "
-        "&mdash; Generated automatically by the EDGAR EFFECT scraper."
+        "Source: <a href='https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&amp;type=EFFECT' "
+        "style='color:#1a56db;'>SEC EDGAR</a> &mdash; Generated automatically by the EDGAR EFFECT scraper."
         "</div></div></body></html>"
     )
 
@@ -377,12 +319,12 @@ def send_email(subject: str, html_body: str) -> None:
     smtp_user = os.environ["SMTP_USERNAME"]
     smtp_pass = os.environ["SMTP_PASSWORD"]
     from_addr = os.environ["EMAIL_FROM"]
-    to_addrs = [a.strip() for a in os.environ["EMAIL_TO"].split(",")]
+    to_addrs  = [a.strip() for a in os.environ["EMAIL_TO"].split(",")]
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = from_addr
-    msg["To"] = ", ".join(to_addrs)
+    msg["From"]    = from_addr
+    msg["To"]      = ", ".join(to_addrs)
     msg.attach(MIMEText(html_body, "html"))
 
     log.info("Sending email to %s via %s:%d", to_addrs, smtp_host, smtp_port)
@@ -398,12 +340,12 @@ def send_email(subject: str, html_body: str) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
-def process_one_day(filing_date: date) -> None:
-    log.info("Processing %s", filing_date)
+def process_month(start: date, end: date) -> None:
+    log.info("Processing %s to %s", start, end)
 
-    raw_hits = fetch_effect_filings(filing_date)
+    raw_hits = fetch_effect_filings(start, end)
     if not raw_hits:
-        log.info("No EFFECT filings found for %s — skipping email.", filing_date)
+        log.info("No EFFECT filings found for %s to %s — skipping.", start, end)
         return
 
     filings = parse_filings(raw_hits)
@@ -411,30 +353,24 @@ def process_one_day(filing_date: date) -> None:
     for f in filings:
         if f["cik"]:
             info = get_company_info(f["cik"])
-            f["category"] = info["category"]
             f["first_filing_date"] = info["first_filing_date"]
-            f["effect_count"] = info["effect_count"]
-        else:
-            f["category"] = "Unknown"
-            f["first_filing_date"] = ""
-            f["effect_count"] = 0
-        log.info("  %s -> %s (first filing: %s, effect count: %d)",
-                 f["company"], f["category"], f["first_filing_date"], f["effect_count"])
+            f["effect_count"]      = info["effect_count"]
+        log.info("  %s (SIC %s, effect count: %d)", f["company"], f["sic"], f["effect_count"])
 
-    filings.sort(key=lambda f: (CATEGORY_ORDER.get(f["category"], 99), f["company"]))
+    spacs = [f for f in filings if f["sic"] == "6770"]
+    spacs.sort(key=lambda f: f["file_date"])
 
-    spac_count = sum(1 for f in filings if f["sic"] == "6770")
-    spac_filings = [f for f in filings if f["sic"] == "6770"]
-    push_pending_to_supabase(spac_filings)
-    if spac_count == 0:
-        log.info("No SPAC filings (SIC 6770) found for %s — skipping email.", filing_date)
+    push_pending_to_supabase(spacs)
+
+    if not spacs:
+        log.info("No SPAC filings (SIC 6770) found for %s to %s — skipping email.", start, end)
         return
 
-    date_label = filing_date.strftime("%Y-%m-%d")
-    subject = f"💸 SPAC IPO Filings {date_label}"
-    html = build_html_email(filings, filing_date)
+    month_label = start.strftime("%B %Y")
+    subject     = f"💸 SPAC IPO Filings — {month_label}"
+    html        = build_html_email(spacs, start, end)
     send_email(subject, html)
-    log.info("Email sent for %s.", filing_date)
+    log.info("Email sent: %d SPAC(s) for %s.", len(spacs), month_label)
 
 
 def main() -> None:
@@ -442,9 +378,8 @@ def main() -> None:
 
     start_str = os.environ.get("EDGAR_START_DATE", "").strip()
     end_str   = os.environ.get("EDGAR_END_DATE",   "").strip()
-    date_str  = os.environ.get("EDGAR_DATE",        "").strip()
 
-    def _parse(s: str, var: str):
+    def _parse(s: str, var: str) -> date:
         try:
             return datetime.strptime(s, "%Y-%m-%d").date()
         except ValueError:
@@ -456,17 +391,13 @@ def main() -> None:
         end   = _parse(end_str,   "EDGAR_END_DATE")
         if start > end:
             log.error("EDGAR_START_DATE must be before or equal to EDGAR_END_DATE.")
-            return
-        days = business_days_in_range(start, end)
-        log.info("Range mode: %d business day(s) from %s to %s", len(days), start, end)
-        for i, day in enumerate(days):
-            process_one_day(day)
-            if i < len(days) - 1:
-                time.sleep(2)
-    elif date_str:
-        process_one_day(_parse(date_str, "EDGAR_DATE"))
+            raise SystemExit(1)
+        log.info("Manual range: %s to %s", start, end)
     else:
-        process_one_day(get_previous_business_day())
+        start, end = _default_month()
+        log.info("Auto-computed range (2 months ago): %s to %s", start, end)
+
+    process_month(start, end)
 
 
 if __name__ == "__main__":
