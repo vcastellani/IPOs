@@ -240,25 +240,33 @@ def push_pending_to_supabase(spacs: list[dict]) -> None:
 # Email  (Claude brand palette)
 # ---------------------------------------------------------------------------
 # Colors:
-#   #D97757 — Claude signature warm orange (accents, links, header stripe)
-#   #2C2825 — warm charcoal (header background, strong text)
-#   #F5F0EB — warm cream (page background, alt rows)
-#   #E7E0D8 — warm sand (borders)
-#   #78716C — warm stone (secondary text)
-#   #FFFFFF  — white (card, primary rows)
+#   #D97757 — Claude signature warm orange (header, table header)
+#   #1A1A1A — near-black text
+#   #FFFFFF  — white (page background, primary rows)
+#   #F5F0EB — warm beige (alternate rows, footer)
+#   #C95B2C — darker orange for links
 
 _FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',Helvetica,Arial,sans-serif"
+_ORANGE     = "#D97757"
+_LINK_COLOR = "#C95B2C"
+_TEXT       = "#1A1A1A"
+
+_TH = (
+    f"padding:11px 16px;text-align:center;font-weight:700;"
+    f"color:#FFFFFF;background:{_ORANGE};font-family:{_FONT};letter-spacing:0.02em;"
+)
 
 SPAC_TABLE_HEADER = (
-    "<table style='width:100%;border-collapse:collapse;font-size:13.5px;font-family:" + _FONT + ";'>"
+    f"<table style='width:100%;border-collapse:collapse;font-size:13.5px;"
+    f"font-family:{_FONT};color:{_TEXT};'>"
     "<thead>"
-    "<tr style='background:#2C2825;'>"
-    "<th style='padding:11px 14px;text-align:left;font-weight:600;color:#F5F0EB;letter-spacing:0.03em;'>Company</th>"
-    "<th style='padding:11px 14px;text-align:left;font-weight:600;color:#F5F0EB;letter-spacing:0.03em;'>CIK</th>"
-    "<th style='padding:11px 14px;text-align:left;font-weight:600;color:#F5F0EB;letter-spacing:0.03em;'>Filing Date</th>"
-    "<th style='padding:11px 14px;text-align:left;font-weight:600;color:#F5F0EB;letter-spacing:0.03em;'>1st EFFECT?</th>"
-    "<th style='padding:11px 14px;text-align:left;font-weight:600;color:#F5F0EB;letter-spacing:0.03em;'>Accession #</th>"
-    "<th style='padding:11px 14px;text-align:left;font-weight:600;color:#F5F0EB;letter-spacing:0.03em;'>PCAOB</th>"
+    "<tr>"
+    f"<th style='{_TH}text-align:left;'>Company</th>"
+    f"<th style='{_TH}'>CIK</th>"
+    f"<th style='{_TH}'>Filing Date</th>"
+    f"<th style='{_TH}'>1st EFFECT?</th>"
+    f"<th style='{_TH}'>Accession #</th>"
+    f"<th style='{_TH}'>PCAOB</th>"
     "</tr>"
     "</thead><tbody>"
 )
@@ -266,30 +274,28 @@ TABLE_FOOTER = "</tbody></table>"
 
 _ROW_BG_EVEN = "#FFFFFF"
 _ROW_BG_ODD  = "#F5F0EB"
-_BORDER       = "1px solid #E7E0D8"
-_LINK_COLOR   = "#C95B2C"   # darker orange — readable on white
 
 
 def build_row(f: dict, idx: int = 0) -> str:
     is_first    = f.get("effect_count", 0) <= 1
     first_label = "&#10003; Yes" if is_first else "No"
-    first_style = "color:#16A34A;font-weight:700;" if is_first else "color:#78716C;"
+    first_style = f"color:#16A34A;font-weight:600;" if is_first else f"color:{_TEXT};"
     pcaob_url   = "https://pcaobus.org/resources/auditorsearch/issuers/?issuercik=" + f["cik"]
     bg          = _ROW_BG_EVEN if idx % 2 == 0 else _ROW_BG_ODD
-    cell        = f"padding:9px 14px;border-bottom:{_BORDER};background:{bg};"
+    cell        = f"padding:9px 16px;background:{bg};border:none;"
 
     return (
         f"<tr>"
         f"<td style='{cell}'>"
         f"<a href='{f['edgar_url']}' style='color:{_LINK_COLOR};text-decoration:none;font-weight:600;'>"
         f"{f['company']}</a></td>"
-        f"<td style='{cell}color:#78716C;'>{f['cik']}</td>"
-        f"<td style='{cell}color:#78716C;font-size:12px;'>{f['file_date']}</td>"
-        f"<td style='{cell}font-size:12px;{first_style}'>{first_label}</td>"
-        f"<td style='{cell}'>"
+        f"<td style='{cell}text-align:center;'>{f['cik']}</td>"
+        f"<td style='{cell}text-align:center;font-size:12px;'>{f['file_date']}</td>"
+        f"<td style='{cell}text-align:center;font-size:12px;{first_style}'>{first_label}</td>"
+        f"<td style='{cell}text-align:center;'>"
         f"<a href='{f['filing_url']}' style='color:{_LINK_COLOR};text-decoration:none;font-size:12px;'>"
         f"{f['accession']}</a></td>"
-        f"<td style='{cell}'>"
+        f"<td style='{cell}text-align:center;'>"
         f"<a href='{pcaob_url}' style='color:{_LINK_COLOR};text-decoration:none;font-size:12px;'>View &#8599;</a>"
         f"</td>"
         f"</tr>"
@@ -303,49 +309,45 @@ def build_html_email(spacs: list[dict], start: date, end: date) -> str:
     count_label = f"{count} SPAC filing{'s' if count != 1 else ''}"
     row_html    = "".join(build_row(f, i) for i, f in enumerate(spacs))
 
-    table_block = (
-        SPAC_TABLE_HEADER + row_html + TABLE_FOOTER
-    )
-
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#F5F0EB;font-family:{_FONT};">
+<body style="margin:0;padding:0;background:#FFFFFF;font-family:{_FONT};color:{_TEXT};">
 
 <div style="max-width:920px;margin:36px auto 48px;background:#FFFFFF;border-radius:10px;
-            overflow:hidden;box-shadow:0 2px 8px rgba(44,40,37,0.12);">
+            overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,0.08);">
 
   <!-- Header -->
-  <div style="background:#2C2825;padding:28px 36px 24px;">
-    <div style="display:inline-block;background:#D97757;border-radius:6px;
-                padding:3px 10px;font-size:11px;font-weight:700;color:#fff;
-                letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px;">
-      EDGAR EFFECT
-    </div>
-    <h1 style="margin:0 0 6px;font-size:22px;font-weight:700;color:#F5F0EB;line-height:1.2;">
+  <div style="background:{_ORANGE};padding:28px 36px 22px;">
+    <h1 style="margin:0 0 6px;font-size:22px;font-weight:700;color:#FFFFFF;line-height:1.2;">
       SPAC IPO Filings &mdash; {month_label}
     </h1>
-    <p style="margin:0;font-size:13px;color:#A89E96;">{date_range}</p>
+    <p style="margin:0;font-size:13px;color:rgba(255,255,255,0.85);">{date_range}</p>
   </div>
-
-  <!-- Orange accent bar -->
-  <div style="height:4px;background:linear-gradient(90deg,#D97757,#C95B2C);"></div>
 
   <!-- Body -->
   <div style="padding:28px 36px 32px;">
-    <p style="margin:0 0 20px;font-size:14px;color:#2C2825;">
-      <strong style="color:#D97757;">{count_label}</strong> found on EDGAR &mdash;
+    <p style="margin:0 0 20px;font-size:14px;color:{_TEXT};">
+      <strong>{count_label}</strong> found on EDGAR &mdash;
       blank check companies (SIC&nbsp;6770).
     </p>
-    {table_block}
+    {SPAC_TABLE_HEADER}{row_html}{TABLE_FOOTER}
   </div>
 
   <!-- Footer -->
-  <div style="padding:16px 36px;background:#F5F0EB;border-top:1px solid #E7E0D8;
-              font-size:11.5px;color:#78716C;">
-    Source:&nbsp;<a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&amp;type=EFFECT"
-      style="color:{_LINK_COLOR};text-decoration:none;">SEC EDGAR</a>
-    &mdash; Generated automatically by the EDGAR EFFECT scraper.
+  <div style="padding:16px 36px;background:#F5F0EB;border-top:1px solid #E7E0D8;">
+    <table style="width:100%;border-collapse:collapse;font-size:11.5px;color:#555555;font-family:{_FONT};">
+      <tr>
+        <td>
+          Source:&nbsp;<a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&amp;type=EFFECT"
+            style="color:{_LINK_COLOR};text-decoration:none;">SEC EDGAR</a>
+          &mdash; Generated automatically by the EDGAR EFFECT scraper.
+        </td>
+        <td style="text-align:right;white-space:nowrap;font-style:italic;">
+          Vincent Castellani, PhD
+        </td>
+      </tr>
+    </table>
   </div>
 
 </div>
