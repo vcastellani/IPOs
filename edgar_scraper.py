@@ -237,80 +237,119 @@ def push_pending_to_supabase(spacs: list[dict]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Email
+# Email  (Claude brand palette)
 # ---------------------------------------------------------------------------
+# Colors:
+#   #D97757 — Claude signature warm orange (accents, links, header stripe)
+#   #2C2825 — warm charcoal (header background, strong text)
+#   #F5F0EB — warm cream (page background, alt rows)
+#   #E7E0D8 — warm sand (borders)
+#   #78716C — warm stone (secondary text)
+#   #FFFFFF  — white (card, primary rows)
+
+_FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',Helvetica,Arial,sans-serif"
 
 SPAC_TABLE_HEADER = (
-    "<table style='width:100%;border-collapse:collapse;font-size:14px;'>"
-    "<thead><tr style='background:#f4f5f7;'>"
-    "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>Company</th>"
-    "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>CIK</th>"
-    "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>Filing Date</th>"
-    "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>1st EFFECT?</th>"
-    "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>Accession #</th>"
-    "<th style='padding:10px 12px;text-align:left;font-weight:700;color:#333;'>PCAOB</th>"
-    "</tr></thead><tbody>"
+    "<table style='width:100%;border-collapse:collapse;font-size:13.5px;font-family:" + _FONT + ";'>"
+    "<thead>"
+    "<tr style='background:#2C2825;'>"
+    "<th style='padding:11px 14px;text-align:left;font-weight:600;color:#F5F0EB;letter-spacing:0.03em;'>Company</th>"
+    "<th style='padding:11px 14px;text-align:left;font-weight:600;color:#F5F0EB;letter-spacing:0.03em;'>CIK</th>"
+    "<th style='padding:11px 14px;text-align:left;font-weight:600;color:#F5F0EB;letter-spacing:0.03em;'>Filing Date</th>"
+    "<th style='padding:11px 14px;text-align:left;font-weight:600;color:#F5F0EB;letter-spacing:0.03em;'>1st EFFECT?</th>"
+    "<th style='padding:11px 14px;text-align:left;font-weight:600;color:#F5F0EB;letter-spacing:0.03em;'>Accession #</th>"
+    "<th style='padding:11px 14px;text-align:left;font-weight:600;color:#F5F0EB;letter-spacing:0.03em;'>PCAOB</th>"
+    "</tr>"
+    "</thead><tbody>"
 )
 TABLE_FOOTER = "</tbody></table>"
 
+_ROW_BG_EVEN = "#FFFFFF"
+_ROW_BG_ODD  = "#F5F0EB"
+_BORDER       = "1px solid #E7E0D8"
+_LINK_COLOR   = "#C95B2C"   # darker orange — readable on white
 
-def build_row(f: dict) -> str:
+
+def build_row(f: dict, idx: int = 0) -> str:
     is_first    = f.get("effect_count", 0) <= 1
     first_label = "&#10003; Yes" if is_first else "No"
-    first_style = "color:#1a7f3c;font-weight:700;" if is_first else "color:#999;"
+    first_style = "color:#16A34A;font-weight:700;" if is_first else "color:#78716C;"
     pcaob_url   = "https://pcaobus.org/resources/auditorsearch/issuers/?issuercik=" + f["cik"]
+    bg          = _ROW_BG_EVEN if idx % 2 == 0 else _ROW_BG_ODD
+    cell        = f"padding:9px 14px;border-bottom:{_BORDER};background:{bg};"
 
     return (
-        "<tr>"
-        "<td style='padding:8px 12px;border-bottom:1px solid #eee;'>"
-        "<a href='" + f["edgar_url"] + "' style='color:#1a56db;text-decoration:none;font-weight:600;'>"
-        + f["company"] + "</a></td>"
-        "<td style='padding:8px 12px;border-bottom:1px solid #eee;color:#555;'>" + f["cik"] + "</td>"
-        "<td style='padding:8px 12px;border-bottom:1px solid #eee;color:#555;font-size:12px;'>" + f["file_date"] + "</td>"
-        "<td style='padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;" + first_style + "'>" + first_label + "</td>"
-        "<td style='padding:8px 12px;border-bottom:1px solid #eee;'>"
-        "<a href='" + f["filing_url"] + "' style='color:#1a56db;text-decoration:none;font-size:12px;'>"
-        + f["accession"] + "</a></td>"
-        "<td style='padding:8px 12px;border-bottom:1px solid #eee;'>"
-        "<a href='" + pcaob_url + "' style='color:#1a56db;text-decoration:none;font-size:12px;'>View &#8599;</a>"
-        "</td>"
-        "</tr>"
+        f"<tr>"
+        f"<td style='{cell}'>"
+        f"<a href='{f['edgar_url']}' style='color:{_LINK_COLOR};text-decoration:none;font-weight:600;'>"
+        f"{f['company']}</a></td>"
+        f"<td style='{cell}color:#78716C;'>{f['cik']}</td>"
+        f"<td style='{cell}color:#78716C;font-size:12px;'>{f['file_date']}</td>"
+        f"<td style='{cell}font-size:12px;{first_style}'>{first_label}</td>"
+        f"<td style='{cell}'>"
+        f"<a href='{f['filing_url']}' style='color:{_LINK_COLOR};text-decoration:none;font-size:12px;'>"
+        f"{f['accession']}</a></td>"
+        f"<td style='{cell}'>"
+        f"<a href='{pcaob_url}' style='color:{_LINK_COLOR};text-decoration:none;font-size:12px;'>View &#8599;</a>"
+        f"</td>"
+        f"</tr>"
     )
 
 
 def build_html_email(spacs: list[dict], start: date, end: date) -> str:
     month_label = start.strftime("%B %Y")
     date_range  = f"{start.strftime('%B %-d')} – {end.strftime('%B %-d, %Y')}"
-    count_label = str(len(spacs)) + " SPAC filing" + ("s" if len(spacs) != 1 else "")
-    row_html    = "".join(build_row(f) for f in spacs)
+    count       = len(spacs)
+    count_label = f"{count} SPAC filing{'s' if count != 1 else ''}"
+    row_html    = "".join(build_row(f, i) for i, f in enumerate(spacs))
 
-    body = (
-        "<h2 style='margin:24px 0 4px;font-size:16px;color:#1a3a6e;'>"
-        "Special Purpose Acquisition Company (SPAC) Filings</h2>"
-        "<p style='margin:0 0 12px;font-size:13px;color:#777;'>"
-        "Blank check companies (SIC 6770) — likely SPAC IPOs or follow-on SPAC registrations.</p>"
-        + SPAC_TABLE_HEADER + row_html + TABLE_FOOTER
+    table_block = (
+        SPAC_TABLE_HEADER + row_html + TABLE_FOOTER
     )
 
-    return (
-        "<!DOCTYPE html><html><head><meta charset='UTF-8'></head>"
-        "<body style='font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;"
-        "background:#f9fafb;margin:0;padding:0;'>"
-        "<div style='max-width:900px;margin:32px auto;background:#fff;border-radius:8px;"
-        "overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.1);'>"
-        "<div style='background:#1a3a6e;padding:24px 32px;color:#fff;'>"
-        "<h1 style='margin:0;font-size:20px;font-weight:700;'>💸 SPAC IPO Filings — " + month_label + "</h1>"
-        "<p style='margin:6px 0 0;opacity:0.85;font-size:14px;'>" + date_range + "</p>"
-        "</div>"
-        "<div style='padding:24px 32px;'>"
-        "<p style='color:#555;margin:0 0 8px;'><strong>" + count_label + "</strong> found on EDGAR.</p>"
-        + body +
-        "</div>"
-        "<div style='padding:16px 32px;background:#f4f5f7;font-size:12px;color:#888;'>"
-        "Source: <a href='https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&amp;type=EFFECT' "
-        "style='color:#1a56db;'>SEC EDGAR</a> &mdash; Generated automatically by the EDGAR EFFECT scraper."
-        "</div></div></body></html>"
-    )
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#F5F0EB;font-family:{_FONT};">
+
+<div style="max-width:920px;margin:36px auto 48px;background:#FFFFFF;border-radius:10px;
+            overflow:hidden;box-shadow:0 2px 8px rgba(44,40,37,0.12);">
+
+  <!-- Header -->
+  <div style="background:#2C2825;padding:28px 36px 24px;">
+    <div style="display:inline-block;background:#D97757;border-radius:6px;
+                padding:3px 10px;font-size:11px;font-weight:700;color:#fff;
+                letter-spacing:0.08em;text-transform:uppercase;margin-bottom:12px;">
+      EDGAR EFFECT
+    </div>
+    <h1 style="margin:0 0 6px;font-size:22px;font-weight:700;color:#F5F0EB;line-height:1.2;">
+      SPAC IPO Filings &mdash; {month_label}
+    </h1>
+    <p style="margin:0;font-size:13px;color:#A89E96;">{date_range}</p>
+  </div>
+
+  <!-- Orange accent bar -->
+  <div style="height:4px;background:linear-gradient(90deg,#D97757,#C95B2C);"></div>
+
+  <!-- Body -->
+  <div style="padding:28px 36px 32px;">
+    <p style="margin:0 0 20px;font-size:14px;color:#2C2825;">
+      <strong style="color:#D97757;">{count_label}</strong> found on EDGAR &mdash;
+      blank check companies (SIC&nbsp;6770).
+    </p>
+    {table_block}
+  </div>
+
+  <!-- Footer -->
+  <div style="padding:16px 36px;background:#F5F0EB;border-top:1px solid #E7E0D8;
+              font-size:11.5px;color:#78716C;">
+    Source:&nbsp;<a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&amp;type=EFFECT"
+      style="color:{_LINK_COLOR};text-decoration:none;">SEC EDGAR</a>
+    &mdash; Generated automatically by the EDGAR EFFECT scraper.
+  </div>
+
+</div>
+</body></html>"""
 
 
 def send_email(subject: str, html_body: str) -> None:
