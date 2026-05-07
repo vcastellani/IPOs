@@ -6,16 +6,12 @@ on:
     - cron: '30 13 1 * *'
   workflow_dispatch:
     inputs:
-      date:
-        description: 'Single date override (YYYY-MM-DD).'
-        required: false
-        default: ''
       start_date:
-        description: 'Range start (YYYY-MM-DD). Leave blank to use previous full month.'
+        description: 'Range start (YYYY-MM-DD). Leave blank to auto-compute (2 months ago).'
         required: false
         default: ''
       end_date:
-        description: 'Range end (YYYY-MM-DD). Leave blank to use previous full month.'
+        description: 'Range end (YYYY-MM-DD). Leave blank to auto-compute (2 months ago).'
         required: false
         default: ''
 
@@ -36,16 +32,18 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Compute previous month date range
-        if: github.event_name == 'schedule' || (github.event.inputs.start_date == '' && github.event.inputs.end_date == '' && github.event.inputs.date == '')
+      - name: Compute date range (2 months ago)
+        if: github.event_name == 'schedule' || (github.event.inputs.start_date == '' && github.event.inputs.end_date == '')
         run: |
           python3 - <<'EOF'
           import os
           from datetime import date, timedelta
           today = date.today()
-          first_of_month = today.replace(day=1)
-          end   = first_of_month - timedelta(days=1)
-          start = end.replace(day=1)
+          first_this   = today.replace(day=1)
+          last_prev    = first_this - timedelta(days=1)
+          first_prev   = last_prev.replace(day=1)
+          end          = first_prev - timedelta(days=1)
+          start        = end.replace(day=1)
           with open(os.environ["GITHUB_ENV"], "a") as f:
               f.write(f"EDGAR_START_DATE={start}\n")
               f.write(f"EDGAR_END_DATE={end}\n")
@@ -61,7 +59,6 @@ jobs:
           SMTP_PASSWORD:    ${{ secrets.SMTP_PASSWORD }}
           EMAIL_FROM:       ${{ secrets.EMAIL_FROM }}
           EMAIL_TO:         ${{ secrets.EMAIL_TO }}
-          EDGAR_DATE:       ${{ github.event.inputs.date }}
           EDGAR_START_DATE: ${{ github.event.inputs.start_date || env.EDGAR_START_DATE }}
           EDGAR_END_DATE:   ${{ github.event.inputs.end_date || env.EDGAR_END_DATE }}
           SUPABASE_URL:     ${{ secrets.SUPABASE_URL }}
