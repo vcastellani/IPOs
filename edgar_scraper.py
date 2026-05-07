@@ -219,7 +219,7 @@ def push_pending_to_supabase(spacs: list[dict]) -> None:
     if not rows:
         return
 
-    url = SUPABASE_URL.rstrip("/") + "/rest/v1/pending_ipos"
+    url = SUPABASE_URL.rstrip("/") + "/rest/v1/pending_ipos?on_conflict=cik"
     headers = {
         "apikey":        SUPABASE_SERVICE_KEY,
         "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
