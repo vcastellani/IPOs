@@ -261,12 +261,13 @@ _TH = (
 
 SPAC_TABLE_HEADER = (
     f"<table style='width:100%;border-collapse:collapse;font-size:15px;"
-    f"font-family:{_FONT};color:{_TEXT};border:2px solid {_ORANGE};'>"
+    f"font-family:{_FONT};color:{_TEXT};border:2px solid {_ORANGE};"
+    f"box-shadow:0 4px 16px rgba(0,0,0,0.12);'>"
     "<thead><tr>"
-    f"<th style='{_TH}text-align:left;'>Company</th>"
+    f"<th style='{_TH}text-align:left;white-space:nowrap;'>Company</th>"
     f"<th style='{_TH}text-align:right;'>CIK</th>"
-    f"<th style='{_TH}text-align:center;'>Filing Date</th>"
-    f"<th style='{_TH}text-align:center;'>1st EFFECT?</th>"
+    f"<th style='{_TH}text-align:center;white-space:nowrap;'>Filing Date</th>"
+    f"<th style='{_TH}text-align:center;'>First Filing?</th>"
     f"<th style='{_TH}text-align:center;'>EDGAR</th>"
     "</tr></thead><tbody>"
 )
@@ -290,9 +291,9 @@ def build_row(f: dict, idx: int = 0) -> str:
 
     return (
         f"<tr>"
-        f"<td style='{cell}font-weight:600;'>{f['company']}</td>"
+        f"<td style='{cell}font-weight:600;white-space:nowrap;'>{f['company']}</td>"
         f"<td style='{cell}text-align:right;'>{f['cik']}</td>"
-        f"<td style='{cell}text-align:center;'>{f['file_date']}</td>"
+        f"<td style='{cell}text-align:center;white-space:nowrap;'>{f['file_date']}</td>"
         f"<td style='{cell}text-align:center;'>{badge}</td>"
         f"<td style='{cell}text-align:center;'>"
         f"<a href='{f['edgar_url']}' style='color:{_TEXT};text-decoration:underline;'>View &#8599;</a>"
@@ -313,14 +314,12 @@ def build_html_email(spacs: list[dict], start: date, end: date) -> str:
              background:linear-gradient(160deg,#FDF6F0 0%,#EDE0D4 100%);
              font-family:{_FONT};color:{_TEXT};">
 
-<div style="max-width:640px;margin:0 auto;background:#FFFFFF;border-radius:10px;
+<div style="max-width:760px;margin:0 auto;background:#FFFFFF;border-radius:10px;
             overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,0.10);">
 
   <!-- Header -->
   <div style="background:{_ORANGE};border-left:4px solid {_ORANGE_DARK};
               padding:24px 32px 20px;box-shadow:0 2px 6px rgba(0,0,0,0.12);">
-    <div style="font-size:11px;font-weight:700;letter-spacing:0.18em;
-                color:#F5EDE0;text-transform:uppercase;margin-bottom:10px;">EE</div>
     <h1 style="margin:0 0 6px;font-size:22px;font-weight:300;color:#FFFFFF;line-height:1.2;">
       SPAC IPO Filings &mdash; {month_label}
     </h1>
