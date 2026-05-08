@@ -246,7 +246,7 @@ def push_pending_to_supabase(spacs: list[dict]) -> None:
 #   #F5F0EB — warm beige (alternate rows, footer)
 #   #C95B2C — darker orange for links
 
-_FONT        = "-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',Helvetica,Arial,sans-serif"
+_FONT        = "system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
 _ORANGE      = "#D97757"
 _ORANGE_DARK = "#B85C38"   # left accent bar + border highlights
 _TEXT        = "#1A1A1A"
