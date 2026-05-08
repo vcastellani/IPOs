@@ -248,25 +248,23 @@ def push_pending_to_supabase(spacs: list[dict]) -> None:
 
 _FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',Helvetica,Arial,sans-serif"
 _ORANGE     = "#D97757"
-_LINK_COLOR = "#C95B2C"
 _TEXT       = "#1A1A1A"
 
 _TH = (
-    f"padding:11px 16px;text-align:center;font-weight:700;"
-    f"color:#FFFFFF;background:{_ORANGE};font-family:{_FONT};letter-spacing:0.02em;"
+    f"padding:12px 16px;text-align:center;font-weight:700;"
+    f"color:#FFFFFF;background:{_ORANGE};font-family:{_FONT};letter-spacing:0.02em;font-size:15px;"
 )
 
 SPAC_TABLE_HEADER = (
-    f"<table style='width:100%;border-collapse:collapse;font-size:13.5px;"
-    f"font-family:{_FONT};color:{_TEXT};'>"
+    f"<table style='width:100%;border-collapse:collapse;font-size:15px;"
+    f"font-family:{_FONT};color:{_TEXT};border:2px solid {_ORANGE};'>"
     "<thead>"
     "<tr>"
     f"<th style='{_TH}text-align:left;'>Company</th>"
     f"<th style='{_TH}'>CIK</th>"
     f"<th style='{_TH}'>Filing Date</th>"
     f"<th style='{_TH}'>1st EFFECT?</th>"
-    f"<th style='{_TH}'>Accession #</th>"
-    f"<th style='{_TH}'>PCAOB</th>"
+    f"<th style='{_TH}'>EDGAR</th>"
     "</tr>"
     "</thead><tbody>"
 )
@@ -279,24 +277,18 @@ _ROW_BG_ODD  = "#F5F0EB"
 def build_row(f: dict, idx: int = 0) -> str:
     is_first    = f.get("effect_count", 0) <= 1
     first_label = "&#10003; Yes" if is_first else "No"
-    first_style = f"color:#16A34A;font-weight:600;" if is_first else f"color:{_TEXT};"
-    pcaob_url   = "https://pcaobus.org/resources/auditorsearch/issuers/?issuercik=" + f["cik"]
+    first_style = "font-weight:600;" if is_first else ""
     bg          = _ROW_BG_EVEN if idx % 2 == 0 else _ROW_BG_ODD
-    cell        = f"padding:9px 16px;background:{bg};border:none;"
+    cell        = f"padding:10px 16px;background:{bg};border:none;color:{_TEXT};"
 
     return (
         f"<tr>"
-        f"<td style='{cell}'>"
-        f"<a href='{f['edgar_url']}' style='color:{_LINK_COLOR};text-decoration:none;font-weight:600;'>"
-        f"{f['company']}</a></td>"
+        f"<td style='{cell}font-weight:600;'>{f['company']}</td>"
         f"<td style='{cell}text-align:center;'>{f['cik']}</td>"
-        f"<td style='{cell}text-align:center;font-size:12px;'>{f['file_date']}</td>"
-        f"<td style='{cell}text-align:center;font-size:12px;{first_style}'>{first_label}</td>"
+        f"<td style='{cell}text-align:center;'>{f['file_date']}</td>"
+        f"<td style='{cell}text-align:center;{first_style}'>{first_label}</td>"
         f"<td style='{cell}text-align:center;'>"
-        f"<a href='{f['filing_url']}' style='color:{_LINK_COLOR};text-decoration:none;font-size:12px;'>"
-        f"{f['accession']}</a></td>"
-        f"<td style='{cell}text-align:center;'>"
-        f"<a href='{pcaob_url}' style='color:{_LINK_COLOR};text-decoration:none;font-size:12px;'>View &#8599;</a>"
+        f"<a href='{f['edgar_url']}' style='color:{_TEXT};text-decoration:underline;'>View &#8599;</a>"
         f"</td>"
         f"</tr>"
     )
@@ -305,8 +297,6 @@ def build_row(f: dict, idx: int = 0) -> str:
 def build_html_email(spacs: list[dict], start: date, end: date) -> str:
     month_label = start.strftime("%B %Y")
     date_range  = f"{start.strftime('%B %-d')} – {end.strftime('%B %-d, %Y')}"
-    count       = len(spacs)
-    count_label = f"{count} SPAC filing{'s' if count != 1 else ''}"
     row_html    = "".join(build_row(f, i) for i, f in enumerate(spacs))
 
     return f"""<!DOCTYPE html>
@@ -327,10 +317,6 @@ def build_html_email(spacs: list[dict], start: date, end: date) -> str:
 
   <!-- Body -->
   <div style="padding:28px 36px 32px;">
-    <p style="margin:0 0 20px;font-size:14px;color:{_TEXT};">
-      <strong>{count_label}</strong> found on EDGAR &mdash;
-      blank check companies (SIC&nbsp;6770).
-    </p>
     {SPAC_TABLE_HEADER}{row_html}{TABLE_FOOTER}
   </div>
 
@@ -340,7 +326,7 @@ def build_html_email(spacs: list[dict], start: date, end: date) -> str:
       <tr>
         <td>
           Source:&nbsp;<a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&amp;type=EFFECT"
-            style="color:{_LINK_COLOR};text-decoration:none;">SEC EDGAR</a>
+            style="color:{_TEXT};text-decoration:underline;">SEC EDGAR</a>
           &mdash; Generated automatically by the EDGAR EFFECT scraper.
         </td>
         <td style="text-align:right;white-space:nowrap;font-style:italic;">
