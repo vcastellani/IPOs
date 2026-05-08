@@ -1,9 +1,11 @@
-"""
-EDGAR EFFECT Filing Scraper
-Fetches all SPAC EFFECT filings for a calendar month and emails a summary.
-Runs on the 1st of each month, covering the month two calendar months prior
-(e.g. June 1 → processes April; July 1 → processes May).
-"""
+####################################################################################################
+##### TITLE: SPAC EDGAR SCRAPER                                                                #####
+##### AUTHOR: VINCENT CASTELLANI                                                               #####
+##### NOTE: THIS FETCHES ALL SUSPECTED SPAC EFFECTIVE FILINGS FOR A MONTH, EMAILS A SUMMARY,   #####  
+#####       AND UPDATES THE DATABASE.                                                          #####
+####################################################################################################
+
+# Import Standard Modules 
 
 import os
 import sys
@@ -13,22 +15,29 @@ import logging
 from datetime import date, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-
 import requests
 
+
+
+# Configure Log
+
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-    stream=sys.stdout,
+    level = logging.INFO,
+    format = "%(asctime)s %(levelname)s %(message)s",
+    stream = sys.stdout,
 )
 log = logging.getLogger(__name__)
 
-EDGAR_SEARCH_URL     = "https://efts.sec.gov/LATEST/search-index"
-EDGAR_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{}.json"
-EDGAR_FILING_BASE    = "https://www.sec.gov/edgar/browse/?CIK={}"
 
-SUPABASE_URL         = os.environ.get("SUPABASE_URL", "")
-SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+
+# Define Constants - EDGAR URLS, SUPABASE, EDGAR API, and SEC Forms
+
+EDGAR_SEARCH_URL         = "https://efts.sec.gov/LATEST/search-index"
+EDGAR_SUBMISSIONS_URL    = "https://data.sec.gov/submissions/CIK{}.json"
+EDGAR_FILING_BASE        = "https://www.sec.gov/edgar/browse/?CIK={}"
+
+SUPABASE_URL             = os.environ.get("SUPABASE_URL", "")
+SUPABASE_SERVICE_KEY     = os.environ.get("SUPABASE_SERVICE_KEY", "")
 
 HEADERS = {
     "User-Agent": os.environ.get(
@@ -49,27 +58,22 @@ FORM_CATEGORIES = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Date helpers
-# ---------------------------------------------------------------------------
+# Define Function - _default_month, which calculates the first and last date of the month two calendar months ago.
 
 def _default_month() -> tuple[date, date]:
-    """Return the first and last day of the month two calendar months ago."""
-    today = date.today()
-    first_this  = today.replace(day=1)
-    last_prev   = first_this - timedelta(days=1)
-    first_prev  = last_prev.replace(day=1)
-    last_target = first_prev - timedelta(days=1)
-    first_target = last_target.replace(day=1)
+    today         = date.today()
+    first_this    = today.replace(day=1)
+    last_prev     = first_this - timedelta(days=1)
+    first_prev    = last_prev.replace(day=1)
+    last_target   = first_prev - timedelta(days=1)
+    first_target  = last_target.replace(day=1)
     return first_target, last_target
 
 
-# ---------------------------------------------------------------------------
-# Data fetching
-# ---------------------------------------------------------------------------
+
+# Define Function - fetch_effect_filings, which queries EDGAR for all EFFECT filings
 
 def fetch_effect_filings(start_date: date, end_date: date) -> list[dict]:
-    """Fetch all EFFECT filings between start_date and end_date inclusive."""
     start_str = start_date.strftime("%Y-%m-%d")
     end_str   = end_date.strftime("%Y-%m-%d")
     log.info("Fetching EFFECT filings from %s to %s", start_str, end_str)
