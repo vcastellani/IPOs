@@ -246,47 +246,54 @@ def push_pending_to_supabase(spacs: list[dict]) -> None:
 #   #F5F0EB — warm beige (alternate rows, footer)
 #   #C95B2C — darker orange for links
 
-_FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',Helvetica,Arial,sans-serif"
-_ORANGE     = "#D97757"
-_TEXT       = "#1A1A1A"
+_FONT        = "-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',Helvetica,Arial,sans-serif"
+_ORANGE      = "#D97757"
+_ORANGE_DARK = "#B85C38"   # left accent bar + border highlights
+_TEXT        = "#1A1A1A"
+_ROW_BG_EVEN = "#FFFFFF"
+_ROW_BG_ODD  = "#EDE5DC"   # more pronounced beige
 
 _TH = (
-    f"padding:12px 16px;text-align:center;font-weight:700;"
-    f"color:#FFFFFF;background:{_ORANGE};font-family:{_FONT};letter-spacing:0.02em;font-size:15px;"
+    f"padding:12px 16px;font-weight:700;color:#FFFFFF;background:{_ORANGE};"
+    f"font-family:{_FONT};font-size:15px;letter-spacing:0.02em;"
+    f"border-top:2px solid {_ORANGE_DARK};border-bottom:3px solid {_ORANGE_DARK};"
 )
 
 SPAC_TABLE_HEADER = (
     f"<table style='width:100%;border-collapse:collapse;font-size:15px;"
     f"font-family:{_FONT};color:{_TEXT};border:2px solid {_ORANGE};'>"
-    "<thead>"
-    "<tr>"
+    "<thead><tr>"
     f"<th style='{_TH}text-align:left;'>Company</th>"
-    f"<th style='{_TH}'>CIK</th>"
-    f"<th style='{_TH}'>Filing Date</th>"
-    f"<th style='{_TH}'>1st EFFECT?</th>"
-    f"<th style='{_TH}'>EDGAR</th>"
-    "</tr>"
-    "</thead><tbody>"
+    f"<th style='{_TH}text-align:right;'>CIK</th>"
+    f"<th style='{_TH}text-align:center;'>Filing Date</th>"
+    f"<th style='{_TH}text-align:center;'>1st EFFECT?</th>"
+    f"<th style='{_TH}text-align:center;'>EDGAR</th>"
+    "</tr></thead><tbody>"
 )
 TABLE_FOOTER = "</tbody></table>"
 
-_ROW_BG_EVEN = "#FFFFFF"
-_ROW_BG_ODD  = "#F5F0EB"
+_BADGE_YES = (
+    "display:inline-block;background:#2D6A4F;color:#FFFFFF;"
+    "border-radius:12px;padding:2px 10px;font-size:12px;font-weight:600;white-space:nowrap;"
+)
+_BADGE_NO = (
+    "display:inline-block;background:#6B7280;color:#FFFFFF;"
+    "border-radius:12px;padding:2px 10px;font-size:12px;font-weight:600;white-space:nowrap;"
+)
 
 
 def build_row(f: dict, idx: int = 0) -> str:
-    is_first    = f.get("effect_count", 0) <= 1
-    first_label = "&#10003; Yes" if is_first else "No"
-    first_style = "font-weight:600;" if is_first else ""
-    bg          = _ROW_BG_EVEN if idx % 2 == 0 else _ROW_BG_ODD
-    cell        = f"padding:10px 16px;background:{bg};border:none;color:{_TEXT};"
+    is_first = f.get("effect_count", 0) <= 1
+    badge    = f"<span style='{_BADGE_YES}'>Yes</span>" if is_first else f"<span style='{_BADGE_NO}'>No</span>"
+    bg       = _ROW_BG_EVEN if idx % 2 == 0 else _ROW_BG_ODD
+    cell     = f"padding:12px 16px;background:{bg};border:none;color:{_TEXT};"
 
     return (
         f"<tr>"
         f"<td style='{cell}font-weight:600;'>{f['company']}</td>"
-        f"<td style='{cell}text-align:center;'>{f['cik']}</td>"
+        f"<td style='{cell}text-align:right;'>{f['cik']}</td>"
         f"<td style='{cell}text-align:center;'>{f['file_date']}</td>"
-        f"<td style='{cell}text-align:center;{first_style}'>{first_label}</td>"
+        f"<td style='{cell}text-align:center;'>{badge}</td>"
         f"<td style='{cell}text-align:center;'>"
         f"<a href='{f['edgar_url']}' style='color:{_TEXT};text-decoration:underline;'>View &#8599;</a>"
         f"</td>"
@@ -302,38 +309,39 @@ def build_html_email(spacs: list[dict], start: date, end: date) -> str:
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#FFFFFF;font-family:{_FONT};color:{_TEXT};">
+<body style="margin:0;padding:32px 16px 48px;
+             background:linear-gradient(160deg,#FDF6F0 0%,#EDE0D4 100%);
+             font-family:{_FONT};color:{_TEXT};">
 
-<div style="max-width:920px;margin:36px auto 48px;background:#FFFFFF;border-radius:10px;
-            overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,0.08);">
+<div style="max-width:640px;margin:0 auto;background:#FFFFFF;border-radius:10px;
+            overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,0.10);">
 
   <!-- Header -->
-  <div style="background:{_ORANGE};padding:28px 36px 22px;">
-    <h1 style="margin:0 0 6px;font-size:22px;font-weight:700;color:#FFFFFF;line-height:1.2;">
+  <div style="background:{_ORANGE};border-left:4px solid {_ORANGE_DARK};
+              padding:24px 32px 20px;box-shadow:0 2px 6px rgba(0,0,0,0.12);">
+    <div style="font-size:11px;font-weight:700;letter-spacing:0.18em;
+                color:#F5EDE0;text-transform:uppercase;margin-bottom:10px;">EE</div>
+    <h1 style="margin:0 0 6px;font-size:22px;font-weight:300;color:#FFFFFF;line-height:1.2;">
       SPAC IPO Filings &mdash; {month_label}
     </h1>
-    <p style="margin:0;font-size:13px;color:rgba(255,255,255,0.85);">{date_range}</p>
+    <p style="margin:0;font-size:12px;color:#F5EDE0;">{date_range}</p>
   </div>
 
+  <!-- Divider -->
+  <div style="height:3px;background:linear-gradient(90deg,{_ORANGE_DARK},{_ORANGE},#F0C4A8,transparent);"></div>
+
   <!-- Body -->
-  <div style="padding:28px 36px 32px;">
+  <div style="padding:24px 28px 32px;">
     {SPAC_TABLE_HEADER}{row_html}{TABLE_FOOTER}
   </div>
 
   <!-- Footer -->
-  <div style="padding:16px 36px;background:#F5F0EB;border-top:1px solid #E7E0D8;">
-    <table style="width:100%;border-collapse:collapse;font-size:11.5px;color:#555555;font-family:{_FONT};">
-      <tr>
-        <td>
-          Source:&nbsp;<a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&amp;type=EFFECT"
-            style="color:{_TEXT};text-decoration:underline;">SEC EDGAR</a>
-          &mdash; Generated automatically by the EDGAR EFFECT scraper.
-        </td>
-        <td style="text-align:right;white-space:nowrap;font-style:italic;">
-          Vincent Castellani, PhD
-        </td>
-      </tr>
-    </table>
+  <div style="padding:14px 28px;background:#F5EDE0;border-top:1px solid #E0CFC0;">
+    <p style="margin:0;font-size:12px;color:#4A3F38;text-align:center;">
+      Source:&nbsp;<a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&amp;type=EFFECT"
+        style="color:{_TEXT};text-decoration:underline;">SEC EDGAR</a>
+      &nbsp;&middot;&nbsp;<span style="font-style:italic;">Vincent Castellani, PhD</span>
+    </p>
   </div>
 
 </div>
