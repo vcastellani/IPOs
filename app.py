@@ -1038,7 +1038,7 @@ if not df.empty:
         df = df.sort_values(_sort_col, ascending=_sort_asc, na_position="last")
 
     _FONT  = "system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
-    _CLAY  = "#D97757"
+    _CLAY  = "#788C5D"
     _IVORY = "#FAF9F5"
     _LGRAY = "#F0EEE6"
     _TEXT  = "#141413"
