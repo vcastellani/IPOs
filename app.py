@@ -1021,19 +1021,46 @@ if not df.empty:
 
     display_cols = [c for c in ["company_name", "cik", "ipo_date", "size_m", "prospectus_url", "verified"] if c in df.columns]
 
-    col_cfg = {
-        "company_name":   st.column_config.TextColumn("Company"),
-        "cik":            st.column_config.TextColumn("CIK"),
-        "ipo_date":       st.column_config.DateColumn("IPO Date", format="YYYY-MM-DD"),
-        "size_m":         st.column_config.NumberColumn("Size ($M)", format="$ %.1f"),
-        "prospectus_url": st.column_config.LinkColumn("Prospectus", display_text="📄"),
-        "verified":       st.column_config.CheckboxColumn("Verified", disabled=True),
-    }
-    st.dataframe(
-        df[display_cols],
-        use_container_width=True,
-        hide_index=True,
-        column_config=col_cfg,
+    _FONT  = "system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
+    _CLAY  = "#D97757"
+    _IVORY = "#FAF9F5"
+    _LGRAY = "#F0EEE6"
+    _TEXT  = "#141413"
+    _TH    = f"padding:11px 16px;text-align:left;font-weight:700;color:#FFFFFF;background:{_CLAY};font-family:{_FONT};font-size:13.5px;white-space:nowrap;"
+    _TD    = f"padding:10px 16px;color:{_TEXT};font-family:{_FONT};font-size:13.5px;border:none;"
+
+    header_cells = "".join(
+        f"<th style='{_TH}'>{h}</th>"
+        for h in ["Company", "CIK", "IPO Date", "Size ($M)", "Prospectus", "Verified"]
+    )
+    rows_html = ""
+    for i, (_, row) in enumerate(df[display_cols].iterrows()):
+        bg  = _IVORY if i % 2 == 0 else _LGRAY
+        td  = _TD + f"background:{bg};"
+        pro = (f'<a href="{row["prospectus_url"]}" target="_blank" '
+               f'style="color:{_CLAY};text-decoration:none;font-size:16px;">📄</a>'
+               if row.get("prospectus_url") else "—")
+        ver  = "✅" if row.get("verified") else "—"
+        size = f"${row['size_m']:,.1f}M" if pd.notna(row.get("size_m")) and row.get("size_m") else "—"
+        date = str(row.get("ipo_date", ""))[:10] if row.get("ipo_date") else "—"
+        rows_html += (
+            f"<tr>"
+            f"<td style='{td}font-weight:600;'>{row.get('company_name','')}</td>"
+            f"<td style='{td}color:#555;'>{row.get('cik','')}</td>"
+            f"<td style='{td}'>{date}</td>"
+            f"<td style='{td}text-align:right;'>{size}</td>"
+            f"<td style='{td}text-align:center;'>{pro}</td>"
+            f"<td style='{td}text-align:center;'>{ver}</td>"
+            f"</tr>"
+        )
+    st.markdown(
+        f"<div style='overflow-x:auto;border-radius:8px;border:1px solid #E7E0D8;"
+        f"box-shadow:0 2px 8px rgba(0,0,0,0.07);'>"
+        f"<table style='width:100%;border-collapse:collapse;'>"
+        f"<thead><tr>{header_cells}</tr></thead>"
+        f"<tbody>{rows_html}</tbody>"
+        f"</table></div>",
+        unsafe_allow_html=True,
     )
     st.caption(f"{len(df)} filing(s) shown")
 
