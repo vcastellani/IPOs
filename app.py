@@ -1026,7 +1026,7 @@ if not df.empty:
     _IVORY = "#FAF9F5"
     _LGRAY = "#F0EEE6"
     _TEXT  = "#141413"
-    _TH    = f"padding:11px 16px;text-align:left;font-weight:700;color:#FFFFFF;background:{_CLAY};font-family:{_FONT};font-size:13.5px;white-space:nowrap;"
+    _TH    = f"padding:11px 16px;text-align:left;font-weight:700;color:#FFFFFF;background:{_CLAY};font-family:{_FONT};font-size:13.5px;white-space:nowrap;position:sticky;top:0;z-index:1;"
     _TD    = f"padding:10px 16px;color:{_TEXT};font-family:{_FONT};font-size:13.5px;border:none;"
 
     header_cells = "".join(
@@ -1035,8 +1035,7 @@ if not df.empty:
     )
     rows_html = ""
     for i, (_, row) in enumerate(df[display_cols].iterrows()):
-        bg  = _IVORY if i % 2 == 0 else _LGRAY
-        td  = _TD + f"background:{bg};"
+        row_bg = _IVORY if i % 2 == 0 else _LGRAY
         pro = (f'<a href="{row["prospectus_url"]}" target="_blank" '
                f'style="color:{_CLAY};text-decoration:none;font-size:16px;">📄</a>'
                if row.get("prospectus_url") else "—")
@@ -1044,19 +1043,23 @@ if not df.empty:
         size = f"${row['size_m']:,.1f}M" if pd.notna(row.get("size_m")) and row.get("size_m") else "—"
         date = str(row.get("ipo_date", ""))[:10] if row.get("ipo_date") else "—"
         rows_html += (
-            f"<tr>"
-            f"<td style='{td}font-weight:600;'>{row.get('company_name','')}</td>"
-            f"<td style='{td}color:#555;'>{row.get('cik','')}</td>"
-            f"<td style='{td}'>{date}</td>"
-            f"<td style='{td}text-align:right;'>{size}</td>"
-            f"<td style='{td}text-align:center;'>{pro}</td>"
-            f"<td style='{td}text-align:center;'>{ver}</td>"
+            f"<tr style='background:{row_bg};'>"
+            f"<td style='{_TD}font-weight:600;'>{row.get('company_name','')}</td>"
+            f"<td style='{_TD}color:#555;'>{row.get('cik','')}</td>"
+            f"<td style='{_TD}'>{date}</td>"
+            f"<td style='{_TD}text-align:right;'>{size}</td>"
+            f"<td style='{_TD}text-align:center;'>{pro}</td>"
+            f"<td style='{_TD}text-align:center;'>{ver}</td>"
             f"</tr>"
         )
     st.markdown(
-        f"<div style='overflow-x:auto;border-radius:8px;border:1px solid #E7E0D8;"
+        f"<style>"
+        f"#spac-main-table td {{background:inherit;}}"
+        f"</style>"
+        f"<div style='overflow-x:auto;overflow-y:auto;max-height:520px;"
+        f"border-radius:8px;border:1px solid #E7E0D8;"
         f"box-shadow:0 2px 8px rgba(0,0,0,0.07);'>"
-        f"<table style='width:100%;border-collapse:collapse;'>"
+        f"<table id='spac-main-table' style='width:100%;border-collapse:collapse;'>"
         f"<thead><tr>{header_cells}</tr></thead>"
         f"<tbody>{rows_html}</tbody>"
         f"</table></div>",
