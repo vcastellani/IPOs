@@ -99,17 +99,7 @@ def load_new_filings() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=60)
-def load_watchlist() -> pd.DataFrame:
-    resp = (
-        anon_client()
-        .table("watchlist")
-        .select("*")
-        .order("created_at", desc=True)
-        .execute()
-    )
-    if not resp.data:
-        return pd.DataFrame()
-    return pd.DataFrame(resp.data)
+
 
 @st.cache_data(ttl=300)
 def load_spac_audit_partners() -> pd.DataFrame:
@@ -1006,10 +996,6 @@ with st.sidebar:
 
     st.divider()
 
-    st.subheader("Filters")
-    filter_exchange = st.multiselect("Exchange", ["NYSE", "NASDAQ", "AMEX", "Other"])
-    search          = st.text_input("Search company name")
-
 # ── Main table ────────────────────────────────────────────────────────────────
 
 st.header("Special Purpose Acquisition Company (SPAC) IPOs")
@@ -1017,11 +1003,6 @@ st.header("Special Purpose Acquisition Company (SPAC) IPOs")
 df = load_ipos()
 
 if not df.empty:
-    if filter_exchange:
-        df = df[df["exchange"].isin(filter_exchange)]
-    if search:
-        df = df[df["company_name"].str.contains(search, case=False, na=False)]
-
     def _get_424b4_url(filings_val):
         if not filings_val:
             return None
@@ -1961,77 +1942,6 @@ if st.session_state.is_admin:
                             st.success("All fields match — safe to mark as verified.")
                         else:
                             st.warning(f"{mismatches} field(s) differ. Review above before marking as verified.")
-
-# ── Watchlist ─────────────────────────────────────────────────────────────────
-
-st.divider()
-st.subheader("Watchlist — Registered but Not Yet Consummated")
-st.caption("SPACs that have filed but not yet completed their IPO.")
-
-wdf = load_watchlist()
-
-if not wdf.empty:
-    w_display_cols = [c for c in ["company_name", "cik", "edgar_url", "s1_url", "notes", "created_at"] if c in wdf.columns]
-    st.dataframe(
-        wdf[w_display_cols],
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "company_name": st.column_config.TextColumn("Company"),
-            "cik":          st.column_config.TextColumn("CIK"),
-            "edgar_url":    st.column_config.LinkColumn("EDGAR Page", display_text="View"),
-            "s1_url":       st.column_config.LinkColumn("S-1", display_text="View"),
-            "notes":        st.column_config.TextColumn("Notes"),
-            "created_at":   st.column_config.DatetimeColumn("Added", format="MMM D, YYYY"),
-        },
-    )
-    st.caption(f"{len(wdf)} entr{'y' if len(wdf) == 1 else 'ies'} on watchlist")
-else:
-    st.info("Watchlist is empty.")
-
-if st.session_state.is_admin:
-    w_col1, w_col2 = st.columns([3, 1])
-
-    with w_col1:
-        with st.form("add_watchlist", clear_on_submit=True):
-            st.markdown("**Add to Watchlist**")
-            wc1, wc2 = st.columns(2)
-            with wc1:
-                w_name      = st.text_input("Company Name *")
-                w_cik       = st.text_input("CIK")
-                w_edgar_url = st.text_input("EDGAR Homepage URL")
-            with wc2:
-                w_s1_url = st.text_input("S-1 URL")
-                w_notes  = st.text_area("Notes", height=100)
-            if st.form_submit_button("Add to Watchlist", type="primary"):
-                if not w_name:
-                    st.error("Company Name is required.")
-                else:
-                    service_client().table("watchlist").insert({
-                        "company_name": w_name,
-                        "cik":          w_cik or None,
-                        "edgar_url":    w_edgar_url or None,
-                        "s1_url":       w_s1_url or None,
-                        "notes":        w_notes or None,
-                    }).execute()
-                    st.success(f"Added {w_name} to watchlist!")
-                    refresh()
-                    st.rerun()
-
-    with w_col2:
-        if not wdf.empty:
-            st.markdown("**Remove Entry**")
-            w_options = {
-                f"{r['company_name']} (ID {r['id']})": r["id"]
-                for _, r in wdf.iterrows()
-            }
-            w_sel_label = st.selectbox("Select", list(w_options.keys()), key="w_del_select", label_visibility="collapsed")
-            w_sel_id    = w_options[w_sel_label]
-            if st.button("Remove", type="secondary", key="w_del_btn"):
-                service_client().table("watchlist").delete().eq("id", w_sel_id).execute()
-                st.success("Removed.")
-                refresh()
-                st.rerun()
 
 # ── SPAC Audit Partners ────────────────────────────────────────────────────────
 
