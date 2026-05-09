@@ -1021,8 +1021,24 @@ if not df.empty:
 
     display_cols = [c for c in ["company_name", "cik", "ipo_date", "size_m", "prospectus_url", "verified"] if c in df.columns]
 
+    # Sort controls
+    _sort_options = {
+        "IPO Date": "ipo_date",
+        "Company": "company_name",
+        "CIK": "cik",
+        "Size ($M)": "size_m",
+    }
+    _sc1, _sc2 = st.columns([3, 1])
+    with _sc1:
+        _sort_by_label = st.selectbox("Sort by", list(_sort_options.keys()), index=0, label_visibility="collapsed")
+    with _sc2:
+        _sort_asc = st.toggle("Ascending", value=False)
+    _sort_col = _sort_options[_sort_by_label]
+    if _sort_col in df.columns:
+        df = df.sort_values(_sort_col, ascending=_sort_asc, na_position="last")
+
     _FONT  = "system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
-    _CLAY  = "#D97757"
+    _CLAY  = "#788C5D"
     _IVORY = "#FAF9F5"
     _LGRAY = "#F0EEE6"
     _TEXT  = "#141413"
