@@ -453,8 +453,8 @@ def extract_from_8k(url: str) -> dict:
         '- ticker_warrants: the warrant ticker symbol (typically ends in "W" or "WS", e.g. "ACMEW"); null if no warrants\n'
         '- ticker_rights: the rights ticker symbol (typically ends in "R", e.g. "ACMER"); null if no rights\n'
         '- exchange: must be exactly one of "NYSE", "NASDAQ", "AMEX"; null if not found\n'
-        '- overallotment_exercised: integer count of securities the underwriters purchased under the over-allotment/greenshoe option; null if not mentioned\n'
-        '- overallotment_exercised_date: YYYY-MM-DD date the over-allotment was exercised; null if not found\n'
+        '- overallotment_exercised: integer count of securities the underwriters purchased under the over-allotment/greenshoe option; look for language like "partial exercise of the... over-allotment option for X Units" or "underwriters exercised their over-allotment"; count only the OA units — ignore any units separately noted as "registered under the S-1MEF" or similar registration statement addendum; null if not mentioned\n'
+        '- overallotment_exercised_date: YYYY-MM-DD date the over-allotment was exercised; if the filing states the OA was exercised simultaneously with or as part of the IPO consummation (e.g. "consummated its IPO of X units, which amount includes a partial exercise"), use the IPO consummation date; null only if overallotment_exercised is also null\n'
         '- pp_securities: integer count of the first private placement security sold simultaneously with the IPO (Item 3.02); null if not found\n'
         '- pp_securities_type: type of first PP security, must be exactly one of: "Shares", "Warrants", "Units - Shares and Warrants", "Rights", "Units - Shares and Rights", "Units - Shares, Warrants, and Rights"; null if not found\n'
         '- pp_price: price per unit/warrant/share of the first PP as a float; null if not found\n'
@@ -1194,6 +1194,27 @@ if st.session_state.is_admin:
         pf = st.session_state.get("prefill_424b4", {})
         pf_uws = pf.get("underwriters") or []
 
+        # After extraction, flag key fields that came back empty
+        _extracted = bool(pf)
+        _missing_keys: set[str] = set()
+        if _extracted:
+            _key_fields = {
+                "company_name":       pf.get("company_name"),
+                "ipo_date":           pf.get("ipo_date"),
+                "securities_offered": pf.get("securities_offered"),
+                "auditor":            pf.get("auditor"),
+                "audit_report_date":  pf.get("audit_report_date"),
+                "exchange":           pf.get("exchange"),
+                "ticker_units":       pf.get("ticker_units"),
+                "underwriters":       pf_uws,
+                "pp_securities":      pf.get("pp_securities"),
+                "pp_price":           pf.get("pp_price"),
+            }
+            _missing_keys = {k for k, v in _key_fields.items() if not v}
+
+        def _lbl(base: str, key: str) -> str:
+            return f"🔴 {base}" if key in _missing_keys else base
+
         _btn_cols = st.columns(2)
         with _btn_cols[0]:
             if pf.get("prospectus_url"):
@@ -1203,6 +1224,22 @@ if st.session_state.is_admin:
                 st.link_button("IPO 8-K Filing 📄", pf["ipo_8k_url"], use_container_width=True)
 
         st.divider()
+
+        if _missing_keys:
+            _label_names = {
+                "company_name":       "Company Name",
+                "ipo_date":           "IPO Date",
+                "securities_offered": "Securities Offered",
+                "auditor":            "Auditor",
+                "audit_report_date":  "Audit Report Date",
+                "exchange":           "Exchange",
+                "ticker_units":       "Units Ticker",
+                "underwriters":       "Lead Underwriter",
+                "pp_securities":      "PP Securities",
+                "pp_price":           "PP Price",
+            }
+            _missing_display = " · ".join(_label_names.get(k, k) for k in sorted(_missing_keys))
+            st.warning(f"🔴 Fields not extracted — fill in manually: **{_missing_display}**")
 
         with st.form("add_form", clear_on_submit=True):
             st.markdown("**Initial Filings**")
@@ -1219,24 +1256,24 @@ if st.session_state.is_admin:
 
             with c1:
                 st.markdown("**Company**")
-                a_name = st.text_input("Company Name *", value=pf.get("company_name", ""))
+                a_name = st.text_input(_lbl("Company Name *", "company_name"), value=pf.get("company_name", ""))
                 a_cik           = st.text_input("CIK", value=pf.get("cik", ""))
                 a_edgar_url     = st.text_input("EDGAR Homepage URL", value=pf.get("edgar_url", ""))
                 a_ticker          = st.text_input("Common Stock Ticker", value=pf.get("ticker") or "")
-                a_ticker_units    = st.text_input("Units Ticker", value=pf.get("ticker_units") or "")
+                a_ticker_units    = st.text_input(_lbl("Units Ticker", "ticker_units"), value=pf.get("ticker_units") or "")
                 a_ticker_warrants = st.text_input("Warrant Ticker", value=pf.get("ticker_warrants") or "")
                 a_ticker_rights   = st.text_input("Rights Ticker", value=pf.get("ticker_rights") or "")
-                a_exchange        = st.selectbox("Exchange", EXCHANGES, index=_idx(EXCHANGES, pf.get("exchange") or ""))
+                a_exchange        = st.selectbox(_lbl("Exchange", "exchange"), EXCHANGES, index=_idx(EXCHANGES, pf.get("exchange") or ""))
                 _known_aud    = load_known_auditors()
                 _aud_opts     = [""] + _known_aud + ["Other / New..."]
                 pf_auditor_raw = pf.get("auditor") or ""
                 _aud_matched   = _fuzzy_match(pf_auditor_raw, _known_aud)
                 pf_auditor     = _aud_matched if _aud_matched else pf_auditor_raw
                 _aud_idx       = _aud_opts.index(pf_auditor) if pf_auditor in _known_aud else (len(_aud_opts) - 1 if pf_auditor else 0)
-                a_auditor_sel = st.selectbox("Auditor", _aud_opts, index=_aud_idx)
+                a_auditor_sel = st.selectbox(_lbl("Auditor", "auditor"), _aud_opts, index=_aud_idx)
                 a_auditor_new = st.text_input("New auditor name", value=pf_auditor if pf_auditor not in _known_aud else "", placeholder="Type if not listed above")
                 a_auditor_since     = st.text_input("Auditor Since", value=str(pf.get("auditor_since", "")) if pf.get("auditor_since") else "")
-                a_audit_report_date = st.text_input("Audit Report Date", value=pf.get("audit_report_date") or "")
+                a_audit_report_date = st.text_input(_lbl("Audit Report Date", "audit_report_date"), value=pf.get("audit_report_date") or "")
                 a_audit_partner_id  = st.text_input("Audit Partner ID", value=pf.get("audit_partner_id") or "")
                 a_image             = st.text_input("Image URL")
 
@@ -1244,9 +1281,9 @@ if st.session_state.is_admin:
                 st.markdown("**Dates & Pricing**")
                 a_effective = pf.get("effective_date")
                 _pf_ipo = pd.to_datetime(pf["ipo_date"]).date() if pf.get("ipo_date") else None
-                a_ipo       = st.date_input("IPO Date", value=_pf_ipo)
+                a_ipo       = st.date_input(_lbl("IPO Date", "ipo_date"), value=_pf_ipo)
 
-                st.markdown("**Underwriters**")
+                st.markdown("**" + _lbl("Underwriters", "underwriters") + "**")
                 _known_uws = load_known_underwriters()
                 _uw_opts   = [""] + _known_uws + ["Other / New..."]
                 def _pf_uw_idx(val):
@@ -1294,7 +1331,7 @@ if st.session_state.is_admin:
 
             with c3:
                 st.markdown("**Securities**")
-                a_securities = st.number_input("Securities Offered", min_value=0, step=100_000,
+                a_securities = st.number_input(_lbl("Securities Offered", "securities_offered"), min_value=0, step=100_000,
                                 value=int(pf["securities_offered"]) if pf.get("securities_offered") else None)
 
                 if a_has_warrants:
@@ -1321,11 +1358,11 @@ if st.session_state.is_admin:
             st.markdown("**Private Placement**")
             pp1, pp2, pp3 = st.columns(3)
             with pp1:
-                a_pp_securities = st.number_input("PP Securities (1)", min_value=0, step=100_000, value=int(pf["pp_securities"]) if pf.get("pp_securities") else None)
+                a_pp_securities = st.number_input(_lbl("PP Securities (1)", "pp_securities"), min_value=0, step=100_000, value=int(pf["pp_securities"]) if pf.get("pp_securities") else None)
             with pp2:
                 a_pp_sec_type = st.selectbox("PP Securities Type (1)", PP_SECURITY_TYPES, index=_idx(PP_SECURITY_TYPES, pf.get("pp_securities_type") or ""))
             with pp3:
-                a_pp_price = st.number_input("PP Price (1) ($)", min_value=0.0, step=0.01, value=float(pf["pp_price"]) if pf.get("pp_price") else None)
+                a_pp_price = st.number_input(_lbl("PP Price (1) ($)", "pp_price"), min_value=0.0, step=0.01, value=float(pf["pp_price"]) if pf.get("pp_price") else None)
             pp4, pp5, pp6 = st.columns(3)
             with pp4:
                 a_pp_securities_2 = st.number_input("PP Securities (2)", min_value=0, step=100_000, value=int(pf["pp_securities_2"]) if pf.get("pp_securities_2") else None)
