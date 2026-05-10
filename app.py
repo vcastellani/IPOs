@@ -1042,23 +1042,6 @@ if not df.empty:
     _TEXT  = "#141413"
     _FONT  = "system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
 
-    # Download button above table, pinned to right
-    if not st.session_state.is_admin:
-        st.markdown(
-            f"<style>div[data-testid='stDownloadButton']>button"
-            f"{{background:{_GREEN};color:#fff;border:none;width:100%;}}"
-            f"div[data-testid='stDownloadButton']>button:hover{{background:#6a7d51;color:#fff;}}</style>",
-            unsafe_allow_html=True,
-        )
-        _, _dl_col = st.columns([4, 1])
-        with _dl_col:
-            st.download_button(
-                "Download Dataset",
-                data=load_ipos().to_csv(index=False),
-                file_name="spac_tracker.csv",
-                mime="text/csv",
-            )
-
     _rows_data = []
     for _, row in df[display_cols].iterrows():
         _rows_data.append({
@@ -1142,6 +1125,22 @@ render();
 
     components.html(_table_html, height=490, scrolling=False)
     st.caption(f"{len(df)} filing(s) shown")
+
+    if not st.session_state.is_admin:
+        st.markdown(
+            f"<style>div[data-testid='stDownloadButton']>button"
+            f"{{background:{_GREEN};color:#fff;border:none;width:100%;}}"
+            f"div[data-testid='stDownloadButton']>button:hover{{background:#6a7d51;color:#fff;}}</style>",
+            unsafe_allow_html=True,
+        )
+        _dl_col, _ = st.columns([1, 4])
+        with _dl_col:
+            st.download_button(
+                "Download Dataset",
+                data=load_ipos().to_csv(index=False),
+                file_name="spac_tracker.csv",
+                mime="text/csv",
+            )
 
     if st.session_state.is_admin:
         dl1, dl2 = st.columns([1, 1])
