@@ -1175,61 +1175,89 @@ if not df_dated.empty:
     )
     yearly.index = yearly.index.astype(str)
 
-    _years  = json.dumps(list(yearly.index))
-    _counts = json.dumps([int(v) for v in yearly.values])
-    _chart_html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
-<style>*{{margin:0;padding:0;box-sizing:border-box}}body{{background:transparent;font-family:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}}</style>
-</head><body>
-<canvas id="c"></canvas>
-<script>
-Chart.register(ChartDataLabels);
-new Chart(document.getElementById("c"),{{
-  type:"bar",
-  data:{{
-    labels:{_years},
-    datasets:[{{
-      data:{_counts},
-      backgroundColor:"#788C5D",
-      borderRadius:4,
-      borderSkipped:false
-    }}]
-  }},
-  options:{{
-    responsive:true,
-    plugins:{{
-      legend:{{display:false}},
-      title:{{
-        display:true,
-        text:"SPAC IPOs by Year",
-        font:{{family:"system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif",size:20,weight:"700"}},
-        color:"#141413",
-        padding:{{bottom:16}}
-      }},
-      datalabels:{{
-        anchor:"end",
-        align:"top",
-        color:"#141413",
-        font:{{family:"system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif",size:12,weight:"600"}},
-        formatter:v=>v
-      }}
-    }},
-    scales:{{
-      x:{{grid:{{display:false}},ticks:{{font:{{family:"system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif",size:12}},color:"#555"}}}},
-      y:{{
-        beginAtZero:true,
-        grid:{{color:"#E7E0D8"}},
-        ticks:{{font:{{family:"system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif",size:12}},color:"#555",stepSize:1}},
-        suggestedMax:{int(yearly.max()) + 2}
-      }}
-    }},
-    layout:{{padding:{{top:24,right:8,bottom:4,left:8}}}}
-  }}
-}});
-</script></body></html>"""
+    _cy  = [int(v) for v in yearly.values]
+    _cyr = list(yearly.index)
+    _n   = len(_cyr)
+    _max_v = max(_cy)
 
-    components.html(_chart_html, height=360, scrolling=False)
+    # SVG dimensions
+    _SW, _SH = 720, 300
+    _LM, _RM, _TM, _BM = 44, 16, 64, 38
+    _pw = _SW - _LM - _RM
+    _ph = _SH - _TM - _BM
+    _y_top = _max_v * 1.18          # headroom for count labels
+    _GREEN = "#788C5D"
+    _FONT  = "system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
+
+    # Y-axis gridlines at 5 nice intervals
+    _step = max(1, round(_y_top / 5 / 5) * 5) if _y_top > 5 else 1
+    _grid_vals = []
+    _v = 0
+    while _v <= _y_top:
+        _grid_vals.append(_v)
+        _v += _step
+
+    _parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {_SW} {_SH}" '
+        f'width="100%" style="font-family:{_FONT};display:block;">',
+        # Title
+        f'<text x="{_SW//2}" y="26" text-anchor="middle" '
+        f'font-size="20" font-weight="700" fill="#141413">SPAC IPOs by Year</text>',
+    ]
+    # Gridlines + y-axis labels
+    for _gv in _grid_vals:
+        _gy = _TM + _ph - (_gv / _y_top) * _ph
+        _parts.append(
+            f'<line x1="{_LM}" y1="{_gy:.1f}" x2="{_LM+_pw}" y2="{_gy:.1f}" '
+            f'stroke="#E7E0D8" stroke-width="1"/>'
+        )
+        _parts.append(
+            f'<text x="{_LM-6}" y="{_gy+4:.1f}" text-anchor="end" '
+            f'font-size="11" fill="#888">{_gv}</text>'
+        )
+    # X-axis baseline
+    _parts.append(
+        f'<line x1="{_LM}" y1="{_TM+_ph}" x2="{_LM+_pw}" y2="{_TM+_ph}" '
+        f'stroke="#CCC" stroke-width="1"/>'
+    )
+    # Bars, count labels, year labels
+    _bgroup = _pw / _n
+    _bw = min(_bgroup * 0.6, 52)
+    for _i, (_yr, _cnt) in enumerate(zip(_cyr, _cy)):
+        _cx  = _LM + (_i + 0.5) * _bgroup
+        _bh  = (_cnt / _y_top) * _ph
+        _bx  = _cx - _bw / 2
+        _by  = _TM + _ph - _bh
+        # Bar with rounded top corners
+        _r = min(3, _bw / 4)
+        _parts.append(
+            f'<path d="M{_bx:.1f},{_by+_r:.1f} '
+            f'Q{_bx:.1f},{_by:.1f} {_bx+_r:.1f},{_by:.1f} '
+            f'L{_bx+_bw-_r:.1f},{_by:.1f} '
+            f'Q{_bx+_bw:.1f},{_by:.1f} {_bx+_bw:.1f},{_by+_r:.1f} '
+            f'L{_bx+_bw:.1f},{_TM+_ph:.1f} L{_bx:.1f},{_TM+_ph:.1f} Z" '
+            f'fill="{_GREEN}"/>'
+        )
+        # Count label above bar
+        _parts.append(
+            f'<text x="{_cx:.1f}" y="{_by-5:.1f}" text-anchor="middle" '
+            f'font-size="11" font-weight="600" fill="#141413">{_cnt}</text>'
+        )
+        # Year label below baseline — rotate if many years
+        if _n > 9:
+            _parts.append(
+                f'<text x="{_cx:.1f}" y="{_TM+_ph+16:.1f}" text-anchor="end" '
+                f'font-size="11" fill="#555" '
+                f'transform="rotate(-40,{_cx:.1f},{_TM+_ph+16:.1f})">{_yr}</text>'
+            )
+        else:
+            _parts.append(
+                f'<text x="{_cx:.1f}" y="{_TM+_ph+18:.1f}" text-anchor="middle" '
+                f'font-size="12" fill="#555">{_yr}</text>'
+            )
+    _parts.append('</svg>')
+
+    st.markdown("".join(_parts), unsafe_allow_html=True)
     st.caption(f"{int(yearly.sum())} IPO(s) total across {len(yearly)} year(s)")
     st.divider()
 
