@@ -156,7 +156,17 @@ def load_pcaob_form_ap() -> pd.DataFrame:
 def lookup_audit_partner(cik: str, audit_report_date: str) -> tuple[str | None, str | None]:
     """Returns (partner_id, debug_message)."""
     from datetime import datetime as _dt
+    from datetime import date as _date
     try:
+        # PCAOB Form AP data only exists from 2017-01-01 onward
+        for fmt in ("%B %d, %Y", "%b %d, %Y", "%Y-%m-%d", "%m/%d/%Y"):
+            try:
+                _parsed = _dt.strptime(audit_report_date.strip(), fmt).date()
+                break
+            except ValueError:
+                _parsed = None
+        if _parsed is not None and _parsed < _date(2017, 1, 1):
+            return "unknown", "Audit date is before 2017-01-01; PCAOB Form AP data not available"
         df = load_pcaob_form_ap()
 
         # Filter to standard issuer audits only
@@ -1270,7 +1280,7 @@ if st.session_state.is_admin:
                 placeholder="CIK (e.g. 1926599)",
             )
         with pf_col2:
-                        pf_date = st.date_input("EFFECT Date", value=None, key="pf_424b4_date", label_visibility="collapsed")
+                        pf_date = st.date_input("EFFECT Date", value=None, key="pf_424b4_date", label_visibility="collapsed", min_value=date(2000, 1, 1))
         with pf_col3:
             if st.button("Find & Extract", key="pf_extract", use_container_width=True):
                 if pf_cik and pf_date:
@@ -1402,7 +1412,7 @@ if st.session_state.is_admin:
                 st.markdown("**Dates & Pricing**")
                 a_effective = pf.get("effective_date")
                 _pf_ipo = pd.to_datetime(pf["ipo_date"]).date() if pf.get("ipo_date") else None
-                a_ipo       = st.date_input(_lbl("IPO Date", "ipo_date"), value=_pf_ipo)
+                a_ipo       = st.date_input(_lbl("IPO Date", "ipo_date"), value=_pf_ipo, min_value=date(2000, 1, 1))
 
                 st.markdown("**" + _lbl("Underwriters", "underwriters") + "**")
                 _known_uws = load_known_underwriters()
@@ -1474,7 +1484,7 @@ if st.session_state.is_admin:
                 a_oa_option         = st.number_input("Total Option (securities)", min_value=0, step=100_000, value=int(pf["overallotment_option"]) if pf.get("overallotment_option") else None)
                 a_oa_exercised      = st.number_input("Exercised (securities)", min_value=0, step=100_000, value=int(pf["overallotment_exercised"]) if pf.get("overallotment_exercised") else None)
                 _pf_oa_date = pd.to_datetime(pf["overallotment_exercised_date"]).date() if pf.get("overallotment_exercised_date") else None
-                a_oa_exercised_date = st.date_input("Exercise Date", value=_pf_oa_date, key="add_oa_ex_date")
+                a_oa_exercised_date = st.date_input("Exercise Date", value=_pf_oa_date, key="add_oa_ex_date", min_value=date(2000, 1, 1))
 
             st.markdown("**Private Placement**")
             pp1, pp2, pp3 = st.columns(3)
@@ -1625,8 +1635,8 @@ if st.session_state.is_admin:
 
                     with ec2:
                         st.markdown("**Dates & Pricing**")
-                        e_effective = st.date_input("Effective Date", value=pd.to_datetime(r["effective_date"]).date() if pd.notna(r.get("effective_date")) else None)
-                        e_ipo       = st.date_input("IPO Date",       value=pd.to_datetime(r["ipo_date"]).date()       if pd.notna(r.get("ipo_date"))       else None)
+                        e_effective = st.date_input("Effective Date", value=pd.to_datetime(r["effective_date"]).date() if pd.notna(r.get("effective_date")) else None, min_value=date(2000, 1, 1))
+                        e_ipo       = st.date_input("IPO Date",       value=pd.to_datetime(r["ipo_date"]).date()       if pd.notna(r.get("ipo_date"))       else None,       min_value=date(2000, 1, 1))
                         e_offer     = st.number_input("Price ($)", value=float(r["offer_price"]) if pd.notna(r.get("offer_price")) else 0.0, step=0.01)
 
                         st.markdown("**Underwriters**")
@@ -1696,7 +1706,7 @@ if st.session_state.is_admin:
                         st.markdown("**Overallotment**")
                         e_oa_option         = st.number_input("Total Option (securities)", value=int(r["overallotment_option"]) if pd.notna(r.get("overallotment_option")) else 0, step=100_000)
                         e_oa_exercised      = st.number_input("Exercised (securities)", value=int(r["overallotment_exercised"]) if pd.notna(r.get("overallotment_exercised")) else 0, step=100_000)
-                        e_oa_exercised_date = st.date_input("Exercise Date", value=pd.to_datetime(r["overallotment_exercised_date"]).date() if pd.notna(r.get("overallotment_exercised_date")) else None)
+                        e_oa_exercised_date = st.date_input("Exercise Date", value=pd.to_datetime(r["overallotment_exercised_date"]).date() if pd.notna(r.get("overallotment_exercised_date")) else None, min_value=date(2000, 1, 1))
 
                     st.markdown("**Private Placement**")
                     epp1, epp2, epp3 = st.columns(3)
