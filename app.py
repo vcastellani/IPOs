@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 from supabase import create_client, Client
 import pandas as pd
 from datetime import date, datetime, timedelta
@@ -998,7 +999,11 @@ with st.sidebar:
 
 # ── Main table ────────────────────────────────────────────────────────────────
 
-st.header("Special Purpose Acquisition Company (SPAC) IPOs")
+st.markdown(
+    "<h2 style='text-align:center;font-family:system-ui,-apple-system,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;'>"
+    "Special Purpose Acquisition Company (SPAC) IPOs</h2>",
+    unsafe_allow_html=True,
+)
 
 df = load_ipos()
 
@@ -1021,84 +1026,129 @@ if not df.empty:
 
     display_cols = [c for c in ["company_name", "cik", "ipo_date", "size_m", "prospectus_url", "verified"] if c in df.columns]
 
-    # Sort controls
-    _sort_options = {
-        "IPO Date": "ipo_date",
-        "Company": "company_name",
-        "CIK": "cik",
-        "Size ($M)": "size_m",
-    }
-    _sc1, _sc2 = st.columns([3, 1])
-    with _sc1:
-        _sort_by_label = st.selectbox("Sort by", list(_sort_options.keys()), index=0, label_visibility="collapsed")
-    with _sc2:
-        _sort_asc = st.toggle("Ascending", value=False)
-    _sort_col = _sort_options[_sort_by_label]
-    if _sort_col in df.columns:
-        df = df.sort_values(_sort_col, ascending=_sort_asc, na_position="last")
-
-    _FONT  = "system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
-    _CLAY  = "#788C5D"
+    _GREEN = "#788C5D"
     _IVORY = "#FAF9F5"
     _LGRAY = "#F0EEE6"
     _TEXT  = "#141413"
-    _TH    = f"padding:11px 16px;text-align:left;font-weight:700;color:#FFFFFF;background:{_CLAY};font-family:{_FONT};font-size:13.5px;white-space:nowrap;position:sticky;top:0;z-index:1;"
-    _TD    = f"padding:10px 16px;color:{_TEXT};font-family:{_FONT};font-size:13.5px;border:none;"
+    _FONT  = "system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
 
-    header_cells = "".join(
-        f"<th style='{_TH}'>{h}</th>"
-        for h in ["Company", "CIK", "IPO Date", "Size ($M)", "Prospectus", "Verified"]
-    )
-    rows_html = ""
-    for i, (_, row) in enumerate(df[display_cols].iterrows()):
-        row_bg = _IVORY if i % 2 == 0 else _LGRAY
-        pro = (f'<a href="{row["prospectus_url"]}" target="_blank" '
-               f'style="color:{_CLAY};text-decoration:none;font-size:16px;">📄</a>'
-               if row.get("prospectus_url") else "—")
-        ver  = "✅" if row.get("verified") else "—"
-        size = f"${row['size_m']:,.1f}M" if pd.notna(row.get("size_m")) and row.get("size_m") else "—"
-        date = str(row.get("ipo_date", ""))[:10] if row.get("ipo_date") else "—"
-        rows_html += (
-            f"<tr style='background:{row_bg};'>"
-            f"<td style='{_TD}font-weight:600;'>{row.get('company_name','')}</td>"
-            f"<td style='{_TD}color:#555;'>{row.get('cik','')}</td>"
-            f"<td style='{_TD}'>{date}</td>"
-            f"<td style='{_TD}text-align:right;'>{size}</td>"
-            f"<td style='{_TD}text-align:center;'>{pro}</td>"
-            f"<td style='{_TD}text-align:center;'>{ver}</td>"
-            f"</tr>"
-        )
-    st.markdown(
-        f"<style>"
-        f"#spac-main-table td {{background:inherit;}}"
-        f"</style>"
-        f"<div style='overflow-x:auto;overflow-y:auto;max-height:520px;"
-        f"border-radius:8px;border:1px solid #E7E0D8;"
-        f"box-shadow:0 2px 8px rgba(0,0,0,0.07);'>"
-        f"<table id='spac-main-table' style='width:100%;border-collapse:collapse;'>"
-        f"<thead><tr>{header_cells}</tr></thead>"
-        f"<tbody>{rows_html}</tbody>"
-        f"</table></div>",
-        unsafe_allow_html=True,
-    )
+    _rows_data = []
+    for _, row in df[display_cols].iterrows():
+        _rows_data.append({
+            "company":        row.get("company_name", "") or "",
+            "cik":            row.get("cik", "") or "",
+            "ipo_date":       str(row.get("ipo_date", ""))[:10] if row.get("ipo_date") else "",
+            "size_m":         float(row["size_m"]) if pd.notna(row.get("size_m")) and row.get("size_m") else None,
+            "prospectus_url": row.get("prospectus_url") or "",
+            "verified":       bool(row.get("verified")),
+        })
+
+    _rows_json = json.dumps(_rows_data)
+    _table_html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:{_FONT};background:transparent;}}
+.wrap{{border-radius:8px;border:1px solid #E7E0D8;box-shadow:0 2px 8px rgba(0,0,0,.07);
+       height:470px;overflow-y:auto;overflow-x:auto;}}
+table{{width:100%;border-collapse:collapse;min-width:560px;}}
+th{{padding:11px 16px;text-align:left;font-weight:700;color:#fff;font-size:13.5px;
+    white-space:nowrap;cursor:pointer;user-select:none;
+    position:sticky;top:0;z-index:1;background:{_GREEN};}}
+th:hover{{background:#6a7d51;}}
+th.sort-none .arr::before{{content:"↕";opacity:.5}}
+th.sort-asc  .arr::before{{content:"▲"}}
+th.sort-desc .arr::before{{content:"▼"}}
+th .arr{{margin-left:5px;font-size:10px;}}
+td{{padding:10px 16px;color:{_TEXT};font-size:13.5px;border:none;}}
+tr:nth-child(odd)  td{{background:{_IVORY};}}
+tr:nth-child(even) td{{background:{_LGRAY};}}
+.company{{font-weight:600}}
+.cik{{color:#555}}
+.right{{text-align:right}}
+.center{{text-align:center}}
+a{{color:{_GREEN};text-decoration:none;font-size:16px;}}
+</style></head><body>
+<div class="wrap"><table>
+<thead><tr>
+  <th data-col="company"  data-type="str"  class="sort-none">Company<span class="arr"></span></th>
+  <th data-col="cik"      data-type="num"  class="sort-none">CIK<span class="arr"></span></th>
+  <th data-col="ipo_date" data-type="str"  class="sort-desc">IPO Date<span class="arr"></span></th>
+  <th data-col="size_m"   data-type="num"  class="sort-none">Size ($M)<span class="arr"></span></th>
+  <th data-col="none"     data-type="none" class="sort-none" style="cursor:default">Prospectus<span class="arr"></span></th>
+  <th data-col="none"     data-type="none" class="sort-none" style="cursor:default">Verified<span class="arr"></span></th>
+</tr></thead>
+<tbody id="tbody"></tbody>
+</table></div>
+<script>
+const DATA={_rows_json};
+let col="ipo_date",asc=false;
+function fmt(n){{return"$"+n.toFixed(1).replace(/\\B(?=(\\d{{3}})+(?!\\d))/g,",")+"M"}}
+function render(){{
+  const rows=[...DATA].sort((a,b)=>{{
+    const va=a[col],vb=b[col];
+    if(va===null&&vb===null)return 0;
+    if(va===null)return 1;if(vb===null)return -1;
+    if(typeof va==="number")return asc?va-vb:vb-va;
+    return asc?String(va).localeCompare(String(vb)):String(vb).localeCompare(String(va));
+  }});
+  document.getElementById("tbody").innerHTML=rows.map(r=>
+    `<tr>
+      <td class="company">${{r.company}}</td>
+      <td class="cik">${{r.cik}}</td>
+      <td>${{r.ipo_date||"—"}}</td>
+      <td class="right">${{r.size_m!==null?fmt(r.size_m):"—"}}</td>
+      <td class="center">${{r.prospectus_url?`<a href="${{r.prospectus_url}}" target="_blank">📄</a>`:"—"}}</td>
+      <td class="center">${{r.verified?"✅":"—"}}</td>
+    </tr>`).join("");
+}}
+document.querySelectorAll("th").forEach(th=>{{
+  if(th.dataset.type==="none")return;
+  th.addEventListener("click",()=>{{
+    const c=th.dataset.col;
+    if(col===c){{asc=!asc;}}else{{col=c;asc=true;}}
+    document.querySelectorAll("th").forEach(h=>h.className="sort-none");
+    th.className=asc?"sort-asc":"sort-desc";
+    render();
+  }});
+}});
+render();
+</script></body></html>"""
+
+    components.html(_table_html, height=490, scrolling=False)
     st.caption(f"{len(df)} filing(s) shown")
 
-    dl1, dl2 = st.columns([1, 1])
-    with dl1:
-        st.download_button(
-            "Download filtered view (.csv)",
-            data=df.to_csv(index=False),
-            file_name="spac_tracker_filtered.csv",
-            mime="text/csv",
+    if st.session_state.is_admin:
+        dl1, dl2 = st.columns([1, 1])
+        with dl1:
+            st.download_button(
+                "Download filtered view (.csv)",
+                data=df.to_csv(index=False),
+                file_name="spac_tracker_filtered.csv",
+                mime="text/csv",
+            )
+        with dl2:
+            full_export = load_ipos()
+            st.download_button(
+                "Download full database (.csv)",
+                data=full_export.to_csv(index=False),
+                file_name="spac_tracker_full.csv",
+                mime="text/csv",
+            )
+    else:
+        st.markdown(
+            f"<style>div[data-testid='stDownloadButton']>button"
+            f"{{background:{_GREEN};color:#fff;border:none;display:block;margin:8px auto 0;}}"
+            f"div[data-testid='stDownloadButton']>button:hover{{background:#6a7d51;color:#fff;}}</style>",
+            unsafe_allow_html=True,
         )
-    with dl2:
-        full_export = load_ipos()
-        st.download_button(
-            "Download full database (.csv)",
-            data=full_export.to_csv(index=False),
-            file_name="spac_tracker_full.csv",
-            mime="text/csv",
-        )
+        _, _dc, _ = st.columns([1, 1, 1])
+        with _dc:
+            full_export = load_ipos()
+            st.download_button(
+                "Download Dataset",
+                data=full_export.to_csv(index=False),
+                file_name="spac_tracker.csv",
+                mime="text/csv",
+            )
 else:
     st.info("No filings yet. Log in as admin to add entries.")
 
