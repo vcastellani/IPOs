@@ -1174,11 +1174,63 @@ if not df_dated.empty:
         .sort_index()
     )
     yearly.index = yearly.index.astype(str)
-    yearly.name  = "SPAC IPOs"
 
-    st.markdown("**SPAC IPOs per Year**")
-    st.bar_chart(yearly, y_label="# of IPOs", x_label="Year")
-    st.caption(f"{len(df_dated)} IPO(s) total across {len(yearly)} year(s)")
+    _years  = json.dumps(list(yearly.index))
+    _counts = json.dumps([int(v) for v in yearly.values])
+    _chart_html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+<style>*{{margin:0;padding:0;box-sizing:border-box}}body{{background:transparent;font-family:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}}</style>
+</head><body>
+<canvas id="c"></canvas>
+<script>
+Chart.register(ChartDataLabels);
+new Chart(document.getElementById("c"),{{
+  type:"bar",
+  data:{{
+    labels:{_years},
+    datasets:[{{
+      data:{_counts},
+      backgroundColor:"#788C5D",
+      borderRadius:4,
+      borderSkipped:false
+    }}]
+  }},
+  options:{{
+    responsive:true,
+    plugins:{{
+      legend:{{display:false}},
+      title:{{
+        display:true,
+        text:"SPAC IPOs by Year",
+        font:{{family:"system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif",size:20,weight:"700"}},
+        color:"#141413",
+        padding:{{bottom:16}}
+      }},
+      datalabels:{{
+        anchor:"end",
+        align:"top",
+        color:"#141413",
+        font:{{family:"system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif",size:12,weight:"600"}},
+        formatter:v=>v
+      }}
+    }},
+    scales:{{
+      x:{{grid:{{display:false}},ticks:{{font:{{family:"system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif",size:12}},color:"#555"}}}},
+      y:{{
+        beginAtZero:true,
+        grid:{{color:"#E7E0D8"}},
+        ticks:{{font:{{family:"system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif",size:12}},color:"#555",stepSize:1}},
+        suggestedMax:{int(yearly.max()) + 2}
+      }}
+    }},
+    layout:{{padding:{{top:24,right:8,bottom:4,left:8}}}}
+  }}
+}});
+</script></body></html>"""
+
+    components.html(_chart_html, height=360, scrolling=False)
+    st.caption(f"{int(yearly.sum())} IPO(s) total across {len(yearly)} year(s)")
     st.divider()
 
 # ── Detail view ───────────────────────────────────────────────────────────────
