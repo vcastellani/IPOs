@@ -1010,7 +1010,7 @@ with st.sidebar:
 # ── Main table ────────────────────────────────────────────────────────────────
 
 st.markdown(
-    "<h2 style='text-align:center;font-family:system-ui,-apple-system,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;'>"
+    "<h2 style='text-align:center;font-size:24px;font-family:system-ui,-apple-system,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;'>"
     "Special Purpose Acquisition Company (SPAC) IPOs</h2>",
     unsafe_allow_html=True,
 )
@@ -1202,7 +1202,7 @@ if not df_dated.empty:
         f'width="100%" style="font-family:{_FONT};display:block;">',
         # Title
         f'<text x="{_SW//2}" y="26" text-anchor="middle" '
-        f'font-size="20" font-weight="700" fill="#141413">SPAC IPOs by Year</text>',
+        f'font-size="24" font-weight="700" fill="#141413">SPAC IPOs by Year</text>',
     ]
     # Gridlines + y-axis labels
     for _gv in _grid_vals:
