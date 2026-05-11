@@ -1007,17 +1007,17 @@ with st.sidebar:
 
     st.divider()
 
-    _NAV_CSS = (
-        "display:block;padding:8px 12px;margin:2px 0;border-radius:6px;"
-        "color:#788C5D;font-weight:600;text-decoration:none;"
-        "font-family:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
-        "font-size:14px;"
-    )
-    _NAV_DIM = _NAV_CSS + "color:#AAA;cursor:default;"
     st.markdown(
-        f"<a href='#spac-ipos'       style='{_NAV_CSS}'>📊 SPAC IPOs</a>"
-        f"<span                       style='{_NAV_DIM}'>🔀 SPAC Combinations</span>"
-        f"<a href='#spac-audit-partners' style='{_NAV_CSS}'>🔍 SPAC Audit Partners</a>",
+        "<style>"
+        ".nav-link{display:block;padding:8px 12px;margin:2px 0;border-radius:6px;"
+        "color:#788C5D;font-weight:600;text-decoration:none;font-size:14px;}"
+        ".nav-link:hover{background:rgba(120,140,93,.1);}"
+        ".nav-dim{display:block;padding:8px 12px;margin:2px 0;border-radius:6px;"
+        "color:#AAA;font-weight:600;font-size:14px;cursor:default;}"
+        "</style>"
+        "<a class='nav-link' href='#spac-ipos'>📊 SPAC IPOs</a>"
+        "<span class='nav-dim'>🔀 SPAC Combinations</span>"
+        "<a class='nav-link' href='#spac-audit-partners'>🔍 SPAC Audit Partners</a>",
         unsafe_allow_html=True,
     )
 
@@ -1025,8 +1025,9 @@ with st.sidebar:
 
 st.markdown("<div id='spac-ipos'></div>", unsafe_allow_html=True)
 st.markdown(
-    "<h2 style='text-align:center;font-size:24px;font-family:system-ui,-apple-system,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;'>"
-    "Special Purpose Acquisition Company (SPAC) IPOs</h2>",
+    "<p style='text-align:center;font-size:24px;font-weight:700;margin:0 0 12px;"
+    "font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#141413;'>"
+    "Special Purpose Acquisition Company (SPAC) IPOs</p>",
     unsafe_allow_html=True,
 )
 
