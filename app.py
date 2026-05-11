@@ -1007,10 +1007,25 @@ with st.sidebar:
 
     st.divider()
 
-# ── Main table ────────────────────────────────────────────────────────────────
+    _NAV_CSS = (
+        "display:block;padding:8px 12px;margin:2px 0;border-radius:6px;"
+        "color:#788C5D;font-weight:600;text-decoration:none;"
+        "font-family:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
+        "font-size:14px;"
+    )
+    _NAV_DIM = _NAV_CSS + "color:#AAA;cursor:default;"
+    st.markdown(
+        f"<a href='#spac-ipos'       style='{_NAV_CSS}'>📊 SPAC IPOs</a>"
+        f"<span                       style='{_NAV_DIM}'>🔀 SPAC Combinations</span>"
+        f"<a href='#spac-audit-partners' style='{_NAV_CSS}'>🔍 SPAC Audit Partners</a>",
+        unsafe_allow_html=True,
+    )
 
+
+
+st.markdown("<div id='spac-ipos'></div>", unsafe_allow_html=True)
 st.markdown(
-    "<h2 style='text-align:center;font-family:system-ui,-apple-system,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;'>"
+    "<h2 style='text-align:center;font-size:24px;font-family:system-ui,-apple-system,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;'>"
     "Special Purpose Acquisition Company (SPAC) IPOs</h2>",
     unsafe_allow_html=True,
 )
@@ -1202,7 +1217,7 @@ if not df_dated.empty:
         f'width="100%" style="font-family:{_FONT};display:block;">',
         # Title
         f'<text x="{_SW//2}" y="26" text-anchor="middle" '
-        f'font-size="20" font-weight="700" fill="#141413">SPAC IPOs by Year</text>',
+        f'font-size="24" font-weight="700" fill="#141413">SPAC IPOs by Year</text>',
     ]
     # Gridlines + y-axis labels
     for _gv in _grid_vals:
@@ -1260,6 +1275,23 @@ if not df_dated.empty:
     st.markdown("".join(_parts), unsafe_allow_html=True)
     st.caption(f"{int(yearly.sum())} IPO(s) total across {len(yearly)} year(s)")
     st.divider()
+
+# ── SPAC Combinations (coming soon) ───────────────────────────────────────────
+
+st.markdown("<div id='spac-combinations'></div>", unsafe_allow_html=True)
+st.markdown(
+    "<h2 style='text-align:center;font-size:24px;"
+    "font-family:system-ui,-apple-system,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;'>"
+    "SPAC Combinations</h2>",
+    unsafe_allow_html=True,
+)
+st.markdown(
+    "<p style='text-align:center;color:#888;font-size:15px;"
+    "font-family:system-ui,-apple-system,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;'>"
+    "Coming Soon</p>",
+    unsafe_allow_html=True,
+)
+st.divider()
 
 # ── Detail view ───────────────────────────────────────────────────────────────
 
@@ -2132,6 +2164,7 @@ if st.session_state.is_admin:
 # ── SPAC Audit Partners ────────────────────────────────────────────────────────
 
 st.divider()
+st.markdown("<div id='spac-audit-partners'></div>", unsafe_allow_html=True)
 st.subheader("SPAC Audit Partners")
 st.caption("Audit engagement partners linked to SPACs in this database, sourced from PCAOB Form AP filings.")
 
