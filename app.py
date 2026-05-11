@@ -1010,7 +1010,7 @@ with st.sidebar:
     st.markdown(
         "<style>"
         ".nav-link{display:block;padding:8px 12px;margin:2px 0;border-radius:6px;"
-        "color:#788C5D;font-weight:600;text-decoration:none;font-size:14px;}"
+        "color:#788C5D !important;font-weight:600;text-decoration:none !important;font-size:14px;}"
         ".nav-link:hover{background:rgba(120,140,93,.1);}"
         ".nav-dim{display:block;padding:8px 12px;margin:2px 0;border-radius:6px;"
         "color:#AAA;font-weight:600;font-size:14px;cursor:default;}"
@@ -1196,9 +1196,16 @@ if not df_dated.empty:
     _n   = len(_cyr)
     _max_v = max(_cy)
 
-    # SVG dimensions
-    _SW, _SH = 720, 300
-    _LM, _RM, _TM, _BM = 44, 16, 64, 38
+    st.markdown(
+        "<p style='text-align:center;font-size:24px;font-weight:700;margin:0 0 4px;"
+        "font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;"
+        "color:#141413;'>SPAC IPOs by Year</p>",
+        unsafe_allow_html=True,
+    )
+
+    # SVG dimensions (no title inside SVG — rendered above as <p>)
+    _SW, _SH = 720, 260
+    _LM, _RM, _TM, _BM = 44, 16, 20, 38
     _pw = _SW - _LM - _RM
     _ph = _SH - _TM - _BM
     _y_top = _max_v * 1.18          # headroom for count labels
@@ -1216,9 +1223,6 @@ if not df_dated.empty:
     _parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {_SW} {_SH}" '
         f'width="100%" style="font-family:{_FONT};display:block;">',
-        # Title
-        f'<text x="{_SW//2}" y="26" text-anchor="middle" '
-        f'font-size="24" font-weight="700" fill="#141413">SPAC IPOs by Year</text>',
     ]
     # Gridlines + y-axis labels
     for _gv in _grid_vals:
