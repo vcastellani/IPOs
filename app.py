@@ -454,24 +454,13 @@ def extract_from_8k(url: str) -> dict:
         '- ticker_warrants: the warrant ticker symbol (typically ends in "W" or "WS", e.g. "ACMEW"); null if no warrants\n'
         '- ticker_rights: the rights ticker symbol (typically ends in "R", e.g. "ACMER"); null if no rights\n'
         '- exchange: must be exactly one of "NYSE", "NASDAQ", "AMEX"; null if not found\n'
-        '- overallotment_exercised: integer count of securities purchased under the over-allotment/greenshoe option. '
-        'Signals to look for: "exercised their over-allotment option for X", "partial exercise of the over-allotment option for X", '
-        '"which amount includes [the full/partial] exercise of the underwriters\' over-allotment". '
-        'CRITICAL — S-1MEF exclusion: filings sometimes read "X Units [via OA] and Y Units registered under the S-1MEF". '
-        'The S-1MEF units are from a separate shelf registration and are NOT part of the OA exercise — count only the OA portion. '
-        'Worked example: "consummated its IPO of 6,900,000 units, which amount includes a partial exercise of the '
-        'Underwriters\' over-allotment option for 800,000 Units and 100,000 Units registered under the S-1MEF" '
-        '→ overallotment_exercised: 800000 (ignore the 100,000 S-1MEF units). '
-        'null only if the over-allotment is not mentioned at all.\n'
-        '- overallotment_exercised_date: YYYY-MM-DD date the over-allotment was exercised. '
-        'The OA is very often exercised simultaneously with the IPO closing and no separate date is given — '
-        'when the OA is described inside the IPO consummation sentence (e.g. "On DATE, the Company consummated its IPO '
-        'of X units, which amount includes a partial exercise of the over-allotment"), use that DATE. '
-        'Do NOT return null just because the date is not stated in its own sentence. '
-        'Worked example: "On December 29, 2023, the Company consummated its IPO of 6,900,000 units, which amount includes '
-        'a partial exercise of the Underwriters\' over-allotment option for 800,000 Units" '
-        '→ overallotment_exercised_date: "2023-12-29". '
-        'null only if overallotment_exercised is also null.\n'
+        '- overallotment_exercised: integer count of securities purchased under the over-allotment option '
+        'ONLY if the 8-K explicitly states the option was exercised simultaneously with the IPO closing '
+        '(e.g. "which amount includes a partial/full exercise of the over-allotment option for X units"). '
+        'If the over-allotment is only described as an option that MAY be exercised, return null. '
+        'null if not explicitly exercised in this filing.\n'
+        '- overallotment_exercised_date: the IPO closing date (YYYY-MM-DD) IF overallotment_exercised is set — '
+        'since simultaneous exercise means the date is the same as ipo_date. null if overallotment_exercised is null.\n'
         '- pp_securities: integer count of the first private placement security sold simultaneously with the IPO (Item 3.02); null if not found\n'
         '- pp_securities_type: type of first PP security, must be exactly one of: "Shares", "Warrants", "Units - Shares and Warrants", "Rights", "Units - Shares and Rights", "Units - Shares, Warrants, and Rights"; null if not found\n'
         '- pp_price: price per unit/warrant/share of the first PP as a float; null if not found\n'
@@ -503,32 +492,6 @@ def extract_from_8k(url: str) -> dict:
         result = json.loads(raw)
     except json.JSONDecodeError:
         result = {}
-
-    # Regex override: catch "partial exercise of the over-allotment for X Units"
-    # when Claude misses it or conflates S-1MEF units.
-    if not result.get("overallotment_exercised"):
-        oa_m = re.search(
-            r'over-allotment\s+option\s+for\s+([\d,]+)\s+[Uu]nit',
-            excerpt, re.IGNORECASE,
-        )
-        if oa_m:
-            result["overallotment_exercised"] = int(oa_m.group(1).replace(",", ""))
-
-    # Regex override: when OA was exercised simultaneously with closing,
-    # pull the date from the IPO consummation sentence.
-    if result.get("overallotment_exercised") and not result.get("overallotment_exercised_date"):
-        date_m = re.search(
-            r'On\s+(\w+\s+\d{1,2},\s+\d{4})\s*,\s*the\s+Company\s+consummated',
-            excerpt, re.IGNORECASE,
-        )
-        if date_m:
-            try:
-                from datetime import datetime as _dt
-                result["overallotment_exercised_date"] = _dt.strptime(
-                    date_m.group(1).strip(), "%B %d, %Y"
-                ).strftime("%Y-%m-%d")
-            except ValueError:
-                pass
 
     return result
 
