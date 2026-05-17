@@ -1371,8 +1371,6 @@ if st.session_state.is_admin:
                                     for k, v in k8_data.items():
                                         if v is not None and not data.get(k):
                                             data[k] = v
-                                    if data.get("overallotment_exercised") and not data.get("overallotment_exercised_date"):
-                                        data["overallotment_exercised_date"] = data.get("ipo_date")
                                 except Exception:
                                     pass
                             data["cik"] = f"{int(pf_cik):010d}"
@@ -1383,6 +1381,9 @@ if st.session_state.is_admin:
                                 with st.spinner("Looking up PCAOB audit partner…"):
                                     _pid, _dbg = lookup_audit_partner(pf_cik, data["audit_report_date"])
                                     data["audit_partner_id"] = _pid
+                            # Clear stale OA widget state so prior SPAC values don't bleed in
+                            for _k in ("add_oa_ex_date",):
+                                st.session_state.pop(_k, None)
                             st.session_state.prefill_424b4 = data
                             if data.get("securities_type") in SECURITY_TYPES:
                                 st.session_state["prefill_sec_type_pending"] = data["securities_type"]
@@ -1956,8 +1957,6 @@ if st.session_state.is_admin:
                                         for k, v in k8_data.items():
                                             if v is not None and not data.get(k):
                                                 data[k] = v
-                                        if data.get("overallotment_exercised") and not data.get("overallotment_exercised_date"):
-                                            data["overallotment_exercised_date"] = data.get("ipo_date")
                                     except Exception:
                                         pass
                                 cik_int = int(row["cik"])
