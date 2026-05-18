@@ -392,7 +392,7 @@ def find_edgar_urls(cik: str, effect_date: str) -> dict:
         filed_dt = _date.fromisoformat(dates[i])
         accession = accessions[i].replace("-", "")
         base = f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{accession}/{docs[i]}"
-        if form in ("424B4", "424B3") and window_start <= filed_dt <= window_end and prospectus_url is None:
+        if form in ("424B4", "424B3", "424B5") and window_start <= filed_dt <= window_end and prospectus_url is None:
             prospectus_url = base
         if form == "S-1" and filed_dt < effect_dt:
             if s1_date is None or filed_dt > s1_date:
@@ -438,6 +438,8 @@ def extract_from_8k(url: str) -> dict:
         '  "ticker_warrants": "ACMEW",\n'
         '  "ticker_rights": "ACMER",\n'
         '  "exchange": "NASDAQ",\n'
+        '  "overallotment_exercised": 3000000,\n'
+        '  "overallotment_exercised_date": "2022-03-04",\n'
         '  "pp_securities": 500000,\n'
         '  "pp_securities_type": "Warrants",\n'
         '  "pp_price": 1.00,\n'
@@ -446,12 +448,20 @@ def extract_from_8k(url: str) -> dict:
         '  "pp_price_2": 10.00\n'
         "}\n\n"
         "Rules:\n"
-        '- ipo_date: date the IPO was consummated/closed in YYYY-MM-DD format; look for "consummated its Initial Public Offering" or "closing of the Initial Public Offering"; null if not found\n'
+        '- ipo_date: date the IPO was consummated/closed in YYYY-MM-DD format; look for "consummated its Initial Public Offering" or "closing of the Initial Public Offering" or "closed the IPO"; null if not found\n'
         '- ticker: the common stock ticker symbol ONLY (NOT the units ticker) — this is the symbol under which shares of common stock trade separately, typically without a suffix (e.g. "ACME"); null if not found or if only units are listed\n'
         '- ticker_units: the units ticker symbol (typically ends in "U", e.g. "ACMEU"); null if units are not listed or not issued\n'
         '- ticker_warrants: the warrant ticker symbol (typically ends in "W" or "WS", e.g. "ACMEW"); null if no warrants\n'
         '- ticker_rights: the rights ticker symbol (typically ends in "R", e.g. "ACMER"); null if no rights\n'
         '- exchange: must be exactly one of "NYSE", "NASDAQ", "AMEX"; null if not found\n'
+        '- overallotment_exercised: integer count of over-allotment units exercised simultaneously with the IPO closing. '
+        'Look for language where the total IPO size INCLUDES an over-allotment portion, e.g.: '
+        '"consummated the IPO of 23,000,000 Units, which includes the exercise in full of the underwriters\' option to purchase 3,000,000 Units to cover over-allotments" → 3000000. '
+        '"completed the sale of 23,000,000 units, including 3,000,000 Units sold pursuant to the full exercise of the underwriter\'s option to purchase additional units to cover over-allotments" → 3000000. '
+        'The OA amount is the subset figure (e.g. 3,000,000), NOT the total IPO size (e.g. 23,000,000). '
+        'null if the over-allotment is not mentioned as having been exercised at closing.\n'
+        '- overallotment_exercised_date: the IPO closing date in YYYY-MM-DD — same as ipo_date, since the exercise was simultaneous with closing. '
+        'null if overallotment_exercised is null.\n'
         '- pp_securities: integer count of the first private placement security sold simultaneously with the IPO (Item 3.02); null if not found\n'
         '- pp_securities_type: type of first PP security, must be exactly one of: "Shares", "Warrants", "Units - Shares and Warrants", "Rights", "Units - Shares and Rights", "Units - Shares, Warrants, and Rights"; null if not found\n'
         '- pp_price: price per unit/warrant/share of the first PP as a float; null if not found\n'
