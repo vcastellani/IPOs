@@ -455,13 +455,15 @@ def extract_from_8k(url: str) -> dict:
         '- ticker_rights: the rights ticker symbol (typically ends in "R", e.g. "ACMER"); null if no rights\n'
         '- exchange: must be exactly one of "NYSE", "NASDAQ", "AMEX"; null if not found\n'
         '- overallotment_exercised: integer count of over-allotment units exercised simultaneously with the IPO closing. '
-        'Look for language where the total IPO size INCLUDES an over-allotment portion, e.g.: '
-        '"consummated the IPO of 23,000,000 Units, which includes the exercise in full of the underwriters\' option to purchase 3,000,000 Units to cover over-allotments" → 3000000. '
-        '"completed the sale of 23,000,000 units, including 3,000,000 Units sold pursuant to the full exercise of the underwriter\'s option to purchase additional units to cover over-allotments" → 3000000. '
-        'The OA amount is the subset figure (e.g. 3,000,000), NOT the total IPO size (e.g. 23,000,000). '
+        'Look for language where the total IPO size INCLUDES an over-allotment portion. Examples:\n'
+        '  "consummated the IPO of 23,000,000 Units, which includes the exercise in full of the underwriters\' option to purchase 3,000,000 Units to cover over-allotments" → 3000000\n'
+        '  "completed the sale of 23,000,000 units, including 3,000,000 Units sold pursuant to the full exercise of the underwriter\'s option to purchase additional units to cover over-allotments" → 3000000\n'
+        '  "consummated its IPO of 28,750,000 units, including 3,750,000 units issued pursuant to the full exercise of the underwriter of its over-allotment option" → 3750000\n'
+        '  "consummated its IPO of 24,150,000 units, including the issuance of 3,150,000 Units as a result of the underwriters\' exercise of their over-allotment option in full" → 3150000\n'
+        'The OA amount is always the SUBSET figure after "including" or "which includes", NOT the total IPO size. '
         'null if the over-allotment is not mentioned as having been exercised at closing.\n'
-        '- overallotment_exercised_date: the IPO closing date in YYYY-MM-DD — same as ipo_date, since the exercise was simultaneous with closing. '
-        'null if overallotment_exercised is null.\n'
+        '- overallotment_exercised_date: MUST be set to the same value as ipo_date whenever overallotment_exercised is non-null, '
+        'since simultaneous exercise means the date equals the IPO closing date. null only if overallotment_exercised is null.\n'
         '- pp_securities: integer count of the first private placement security sold simultaneously with the IPO (Item 3.02); null if not found\n'
         '- pp_securities_type: type of first PP security, must be exactly one of: "Shares", "Warrants", "Units - Shares and Warrants", "Rights", "Units - Shares and Rights", "Units - Shares, Warrants, and Rights"; null if not found\n'
         '- pp_price: price per unit/warrant/share of the first PP as a float; null if not found\n'
@@ -493,6 +495,17 @@ def extract_from_8k(url: str) -> dict:
         result = json.loads(raw)
     except json.JSONDecodeError:
         result = {}
+
+    # Normalize compact date strings (e.g. "20220125" → "2022-01-25")
+    for _dk in ("ipo_date", "overallotment_exercised_date"):
+        _dv = result.get(_dk)
+        if isinstance(_dv, str) and re.fullmatch(r'\d{8}', _dv):
+            result[_dk] = f"{_dv[:4]}-{_dv[4:6]}-{_dv[6:]}"
+
+    # If OA amount found but date missing, fall back to ipo_date (simultaneous closing)
+    if result.get("overallotment_exercised") and not result.get("overallotment_exercised_date"):
+        if result.get("ipo_date"):
+            result["overallotment_exercised_date"] = result["ipo_date"]
 
     return result
 
