@@ -10,6 +10,7 @@ import re
 import json
 import difflib
 import anthropic
+import time
 
 st.set_page_config(
     page_title="SPAC Tracker",
@@ -237,11 +238,7 @@ def anthropic_client():
     return anthropic.Anthropic(api_key=st.secrets.get("anthropic_api_key", ""))
 
 def extract_from_424b4(url: str) -> dict:
-    resp = requests.get(
-        url,
-        headers={"User-Agent": "SPACTracker/1.0 research@example.com"},
-        timeout=30,
-    )
+    resp = _sec_get(url, timeout=30)
     resp.raise_for_status()
 
     text = re.sub(r"<[^>]+>", " ", resp.text)
@@ -360,15 +357,24 @@ def extract_from_424b4(url: str) -> dict:
         raise ValueError(f"Claude returned non-JSON (first 300 chars): {raw[:300]}") from e
 
 
+_SEC_HEADERS = {"User-Agent": "SPACTracker/1.0 research@example.com"}
+
+def _sec_get(url: str, timeout: int = 15) -> requests.Response:
+    """GET a data.sec.gov URL with exponential backoff on 429 responses."""
+    delays = [2, 4, 8, 16]
+    for attempt, delay in enumerate(delays + [None]):
+        resp = requests.get(url, headers=_SEC_HEADERS, timeout=timeout)
+        if resp.status_code != 429 or delay is None:
+            resp.raise_for_status()
+            return resp
+        time.sleep(delay)
+    raise RuntimeError(f"SEC EDGAR rate-limited after retries: {url}")
+
+
 def find_edgar_urls(cik: str, effect_date: str) -> dict:
     from datetime import date as _date, timedelta
     cik_int = int(cik)
-    resp = requests.get(
-        f"https://data.sec.gov/submissions/CIK{cik_int:010d}.json",
-        headers={"User-Agent": "SPACTracker/1.0 research@example.com"},
-        timeout=15,
-    )
-    resp.raise_for_status()
+    resp = _sec_get(f"https://data.sec.gov/submissions/CIK{cik_int:010d}.json")
     data = resp.json()
     filings    = data.get("filings", {}).get("recent", {})
     forms      = filings.get("form", [])
@@ -417,11 +423,7 @@ def find_edgar_urls(cik: str, effect_date: str) -> dict:
     return {"prospectus_url": prospectus_url, "s1_url": s1_url, "ipo_8k_url": ipo_8k_url, "tenk_urls": tenk_urls}
 
 def extract_from_8k(url: str) -> dict:
-    resp = requests.get(
-        url,
-        headers={"User-Agent": "SPACTracker/1.0 research@example.com"},
-        timeout=30,
-    )
+    resp = _sec_get(url, timeout=30)
     resp.raise_for_status()
 
     text = re.sub(r"<[^>]+>", " ", resp.text)
@@ -731,12 +733,7 @@ def _parse_tickers_from_xbrl(raw_html: str) -> dict:
 
 def extract_from_10k(url: str) -> dict:
     """Extract key IPO/PP verification fields from a 10-K primary document."""
-    resp = requests.get(
-        url,
-        headers={"User-Agent": "SPACTracker/1.0 research@example.com"},
-        timeout=60,
-    )
-    resp.raise_for_status()
+    resp = _sec_get(url, timeout=60)
 
     text = re.sub(r"<[^>]+>", " ", resp.text)
     text = re.sub(r"https?://\S+|www\.\S+", " ", text)
