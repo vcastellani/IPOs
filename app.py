@@ -1375,6 +1375,11 @@ if st.session_state.is_admin:
         with pf_col3:
             if st.button("Find & Extract", key="pf_extract", use_container_width=True):
                 if pf_cik and pf_date:
+                    # Clear prior SPAC's prefill and widget state up front so a
+                    # failed extraction leaves the form blank, not stale.
+                    st.session_state.pop("prefill_424b4", None)
+                    st.session_state.pop("prefill_sec_type_pending", None)
+                    st.session_state.pop("add_oa_ex_date", None)
                     with st.spinner("Looking up EDGAR..."):
                         try:
                             urls = find_edgar_urls(pf_cik, pf_date.isoformat())
@@ -1391,8 +1396,8 @@ if st.session_state.is_admin:
                                     for k, v in k8_data.items():
                                         if v is not None and not data.get(k):
                                             data[k] = v
-                                except Exception:
-                                    pass
+                                except Exception as k8_err:
+                                    st.warning(f"8-K extraction failed ({k8_err}) — ticker, OA, and PP fields must be filled manually.")
                             data["cik"] = f"{int(pf_cik):010d}"
                             data["effective_date"] = pf_date.isoformat()
                             cik_int = int(pf_cik)
@@ -1401,9 +1406,6 @@ if st.session_state.is_admin:
                                 with st.spinner("Looking up PCAOB audit partner…"):
                                     _pid, _dbg = lookup_audit_partner(pf_cik, data["audit_report_date"])
                                     data["audit_partner_id"] = _pid
-                            # Clear stale OA widget state so prior SPAC values don't bleed in
-                            for _k in ("add_oa_ex_date",):
-                                st.session_state.pop(_k, None)
                             st.session_state.prefill_424b4 = data
                             if data.get("securities_type") in SECURITY_TYPES:
                                 st.session_state["prefill_sec_type_pending"] = data["securities_type"]
@@ -1962,6 +1964,12 @@ if st.session_state.is_admin:
                     if row.get("edgar_url"):
                         rc[4].link_button("EDGAR ↗", row["edgar_url"], use_container_width=True)
                     if rc[5].button("Add →", key=f"nf_add_{row['id']}", use_container_width=True, type="primary"):
+                        # Clear prior SPAC's prefill and widget state up front so a
+                        # failed extraction leaves the form blank, not stale.
+                        st.session_state.pop("prefill_424b4", None)
+                        st.session_state.pop("prefill_sec_type_pending", None)
+                        st.session_state.pop("pending_approve_id", None)
+                        st.session_state.pop("add_oa_ex_date", None)
                         with st.spinner("Looking up EDGAR filings…"):
                             try:
                                 urls   = find_edgar_urls(row["cik"], str(row["effect_date"]))
@@ -1977,8 +1985,8 @@ if st.session_state.is_admin:
                                         for k, v in k8_data.items():
                                             if v is not None and not data.get(k):
                                                 data[k] = v
-                                    except Exception:
-                                        pass
+                                    except Exception as k8_err:
+                                        st.warning(f"8-K extraction failed ({k8_err}) — ticker, OA, and PP fields must be filled manually.")
                                 cik_int = int(row["cik"])
                                 data["cik"]            = f"{cik_int:010d}"
                                 data["company_name"]   = data.get("company_name") or row["company_name"]
