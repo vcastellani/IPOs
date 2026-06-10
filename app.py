@@ -474,6 +474,7 @@ def extract_from_8k(url: str) -> dict:
         '  "completed the sale of 23,000,000 units, including 3,000,000 Units sold pursuant to the full exercise of the underwriter\'s option to purchase additional units to cover over-allotments" → 3000000\n'
         '  "consummated its IPO of 28,750,000 units, including 3,750,000 units issued pursuant to the full exercise of the underwriter of its over-allotment option" → 3750000\n'
         '  "consummated its IPO of 24,150,000 units, including the issuance of 3,150,000 Units as a result of the underwriters\' exercise of their over-allotment option in full" → 3150000\n'
+        '  "consummated its IPO of 25,875,000 units, including 3,375,000 Units issued pursuant to the exercise of the underwriters\' over-allotment option in full" → 3375000\n'
         'The OA amount is always the SUBSET figure after "including" or "which includes", NOT the total IPO size. '
         'null if the over-allotment is not mentioned as having been exercised at closing.\n'
         '- overallotment_exercised_date: MUST be set to the same value as ipo_date whenever overallotment_exercised is non-null, '
@@ -515,6 +516,18 @@ def extract_from_8k(url: str) -> dict:
         _dv = result.get(_dk)
         if isinstance(_dv, str) and re.fullmatch(r'\d{8}', _dv):
             result[_dk] = f"{_dv[:4]}-{_dv[4:6]}-{_dv[6:]}"
+
+    # Deterministic regex fallback if the model missed the OA amount:
+    # "..., including 3,375,000 Units issued pursuant to the ... over-allotment option ..."
+    # "..., which includes the exercise in full of the ... option to purchase 3,000,000 Units to cover over-allotments"
+    if not result.get("overallotment_exercised"):
+        oa_match = re.search(
+            r'(?:including|which includes)[^.;]{0,150}?(\d{1,3}(?:,\d{3})+)\s+(?:units|shares)'
+            r'[^.;]{0,200}?over-?\s?allotment',
+            excerpt, re.IGNORECASE,
+        )
+        if oa_match:
+            result["overallotment_exercised"] = int(oa_match.group(1).replace(",", ""))
 
     # If OA amount found but date missing, fall back to ipo_date (simultaneous closing)
     if result.get("overallotment_exercised") and not result.get("overallotment_exercised_date"):
