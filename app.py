@@ -362,13 +362,18 @@ _SEC_HEADERS = {"User-Agent": "SPACTracker/1.0 research@example.com"}
 def _sec_get(url: str, timeout: int = 15) -> requests.Response:
     """GET a data.sec.gov URL with exponential backoff on 429 responses."""
     delays = [2, 4, 8, 16]
-    for attempt, delay in enumerate(delays + [None]):
+    for delay in delays:
         resp = requests.get(url, headers=_SEC_HEADERS, timeout=timeout)
-        if resp.status_code != 429 or delay is None:
+        if resp.status_code != 429:
             resp.raise_for_status()
             return resp
         time.sleep(delay)
-    raise RuntimeError(f"SEC EDGAR rate-limited after retries: {url}")
+    # Final attempt — raise descriptive error if still rate-limited
+    resp = requests.get(url, headers=_SEC_HEADERS, timeout=timeout)
+    if resp.status_code == 429:
+        raise RuntimeError(f"SEC EDGAR rate-limited after {len(delays)+1} attempts: {url}")
+    resp.raise_for_status()
+    return resp
 
 
 def find_edgar_urls(cik: str, effect_date: str) -> dict:
@@ -393,6 +398,7 @@ def find_edgar_urls(cik: str, effect_date: str) -> dict:
     ipo_8k_url     = None
     ipo_8k_date    = None
     tenk_filings   = []  # list of (filed_dt, url) for all 10-Ks after effect_dt
+    fallback_8ks   = []  # all 8-Ks after effect_dt sorted ascending, used when no Items 1.01+3.02 found
 
     for i, form in enumerate(forms):
         filed_dt = _date.fromisoformat(dates[i])
@@ -411,12 +417,18 @@ def find_edgar_urls(cik: str, effect_date: str) -> dict:
                 if ipo_8k_date is None or filed_dt < ipo_8k_date:
                     ipo_8k_url  = base
                     ipo_8k_date = filed_dt
+            fallback_8ks.append((filed_dt, base))
         if form == "10-K" and filed_dt > effect_dt:
             tenk_filings.append((filed_dt, base))
 
     # Sort 10-Ks ascending by date so 1st, 2nd, 3rd order is correct
     tenk_filings.sort(key=lambda x: x[0])
     tenk_urls = [url for _, url in tenk_filings]
+
+    # If no Items 1.01+3.02 8-K found, fall back to the first 8-K after the EFFECT date
+    if ipo_8k_url is None and fallback_8ks:
+        fallback_8ks.sort(key=lambda x: x[0])
+        ipo_8k_url = fallback_8ks[0][1]
 
     if prospectus_url is None:
         raise ValueError(f"No 424B4 or 424B3 found for CIK {cik} within 3 days before / 21 days after {effect_date}")
@@ -429,7 +441,7 @@ def extract_from_8k(url: str) -> dict:
     text = re.sub(r"<[^>]+>", " ", resp.text)
     text = re.sub(r"https?://\S+|www\.\S+", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
-    excerpt = text[:25000]
+    excerpt = text[:40000]
 
     prompt = (
         "Extract these fields from a SPAC IPO consummation 8-K filing (Items 1.01 and 3.02). Return ONLY a raw JSON object:\n\n"
