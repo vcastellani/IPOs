@@ -362,13 +362,18 @@ _SEC_HEADERS = {"User-Agent": "SPACTracker/1.0 research@example.com"}
 def _sec_get(url: str, timeout: int = 15) -> requests.Response:
     """GET a data.sec.gov URL with exponential backoff on 429 responses."""
     delays = [2, 4, 8, 16]
-    for attempt, delay in enumerate(delays + [None]):
+    for delay in delays:
         resp = requests.get(url, headers=_SEC_HEADERS, timeout=timeout)
-        if resp.status_code != 429 or delay is None:
+        if resp.status_code != 429:
             resp.raise_for_status()
             return resp
         time.sleep(delay)
-    raise RuntimeError(f"SEC EDGAR rate-limited after retries: {url}")
+    # Final attempt — raise descriptive error if still rate-limited
+    resp = requests.get(url, headers=_SEC_HEADERS, timeout=timeout)
+    if resp.status_code == 429:
+        raise RuntimeError(f"SEC EDGAR rate-limited after {len(delays)+1} attempts: {url}")
+    resp.raise_for_status()
+    return resp
 
 
 def find_edgar_urls(cik: str, effect_date: str) -> dict:
@@ -393,6 +398,7 @@ def find_edgar_urls(cik: str, effect_date: str) -> dict:
     ipo_8k_url     = None
     ipo_8k_date    = None
     tenk_filings   = []  # list of (filed_dt, url) for all 10-Ks after effect_dt
+    fallback_8ks   = []  # all 8-Ks after effect_dt sorted ascending, used when no Items 1.01+3.02 found
 
     for i, form in enumerate(forms):
         filed_dt = _date.fromisoformat(dates[i])
@@ -411,12 +417,18 @@ def find_edgar_urls(cik: str, effect_date: str) -> dict:
                 if ipo_8k_date is None or filed_dt < ipo_8k_date:
                     ipo_8k_url  = base
                     ipo_8k_date = filed_dt
+            fallback_8ks.append((filed_dt, base))
         if form == "10-K" and filed_dt > effect_dt:
             tenk_filings.append((filed_dt, base))
 
     # Sort 10-Ks ascending by date so 1st, 2nd, 3rd order is correct
     tenk_filings.sort(key=lambda x: x[0])
     tenk_urls = [url for _, url in tenk_filings]
+
+    # If no Items 1.01+3.02 8-K found, fall back to the first 8-K after the EFFECT date
+    if ipo_8k_url is None and fallback_8ks:
+        fallback_8ks.sort(key=lambda x: x[0])
+        ipo_8k_url = fallback_8ks[0][1]
 
     if prospectus_url is None:
         raise ValueError(f"No 424B4 or 424B3 found for CIK {cik} within 3 days before / 21 days after {effect_date}")
@@ -429,7 +441,7 @@ def extract_from_8k(url: str) -> dict:
     text = re.sub(r"<[^>]+>", " ", resp.text)
     text = re.sub(r"https?://\S+|www\.\S+", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
-    excerpt = text[:25000]
+    excerpt = text[:40000]
 
     prompt = (
         "Extract these fields from a SPAC IPO consummation 8-K filing (Items 1.01 and 3.02). Return ONLY a raw JSON object:\n\n"
@@ -1375,6 +1387,11 @@ if st.session_state.is_admin:
         with pf_col3:
             if st.button("Find & Extract", key="pf_extract", use_container_width=True):
                 if pf_cik and pf_date:
+                    # Clear prior SPAC's prefill and widget state up front so a
+                    # failed extraction leaves the form blank, not stale.
+                    st.session_state.pop("prefill_424b4", None)
+                    st.session_state.pop("prefill_sec_type_pending", None)
+                    st.session_state.pop("add_oa_ex_date", None)
                     with st.spinner("Looking up EDGAR..."):
                         try:
                             urls = find_edgar_urls(pf_cik, pf_date.isoformat())
@@ -1391,8 +1408,8 @@ if st.session_state.is_admin:
                                     for k, v in k8_data.items():
                                         if v is not None and not data.get(k):
                                             data[k] = v
-                                except Exception:
-                                    pass
+                                except Exception as k8_err:
+                                    st.warning(f"8-K extraction failed ({k8_err}) — ticker, OA, and PP fields must be filled manually.")
                             data["cik"] = f"{int(pf_cik):010d}"
                             data["effective_date"] = pf_date.isoformat()
                             cik_int = int(pf_cik)
@@ -1401,9 +1418,6 @@ if st.session_state.is_admin:
                                 with st.spinner("Looking up PCAOB audit partner…"):
                                     _pid, _dbg = lookup_audit_partner(pf_cik, data["audit_report_date"])
                                     data["audit_partner_id"] = _pid
-                            # Clear stale OA widget state so prior SPAC values don't bleed in
-                            for _k in ("add_oa_ex_date",):
-                                st.session_state.pop(_k, None)
                             st.session_state.prefill_424b4 = data
                             if data.get("securities_type") in SECURITY_TYPES:
                                 st.session_state["prefill_sec_type_pending"] = data["securities_type"]
@@ -1962,6 +1976,12 @@ if st.session_state.is_admin:
                     if row.get("edgar_url"):
                         rc[4].link_button("EDGAR ↗", row["edgar_url"], use_container_width=True)
                     if rc[5].button("Add →", key=f"nf_add_{row['id']}", use_container_width=True, type="primary"):
+                        # Clear prior SPAC's prefill and widget state up front so a
+                        # failed extraction leaves the form blank, not stale.
+                        st.session_state.pop("prefill_424b4", None)
+                        st.session_state.pop("prefill_sec_type_pending", None)
+                        st.session_state.pop("pending_approve_id", None)
+                        st.session_state.pop("add_oa_ex_date", None)
                         with st.spinner("Looking up EDGAR filings…"):
                             try:
                                 urls   = find_edgar_urls(row["cik"], str(row["effect_date"]))
@@ -1977,8 +1997,8 @@ if st.session_state.is_admin:
                                         for k, v in k8_data.items():
                                             if v is not None and not data.get(k):
                                                 data[k] = v
-                                    except Exception:
-                                        pass
+                                    except Exception as k8_err:
+                                        st.warning(f"8-K extraction failed ({k8_err}) — ticker, OA, and PP fields must be filled manually.")
                                 cik_int = int(row["cik"])
                                 data["cik"]            = f"{cik_int:010d}"
                                 data["company_name"]   = data.get("company_name") or row["company_name"]
