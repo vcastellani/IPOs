@@ -62,6 +62,7 @@ def load_ipos() -> pd.DataFrame:
         .table("ipos")
         .select("*")
         .order("ipo_date", desc=True)
+        .limit(10000)
         .execute()
     )
     if not resp.data:
