@@ -57,17 +57,31 @@ def service_client() -> Client:
 
 @st.cache_data(ttl=60)
 def load_ipos() -> pd.DataFrame:
-    resp = (
-        anon_client()
-        .table("ipos")
-        .select("*")
-        .order("ipo_date", desc=True)
-        .limit(10000)
-        .execute()
-    )
-    if not resp.data:
+    # Supabase / PostgREST caps each response at the project's "max rows"
+    # setting (1,000 by default), so a single .limit() call cannot return
+    # more than that. Page through the table with .range() until a short
+    # page comes back to guarantee we load the entire dataset.
+    page_size = 1000
+    offset = 0
+    rows: list = []
+    client = anon_client()
+    while True:
+        resp = (
+            client
+            .table("ipos")
+            .select("*")
+            .order("ipo_date", desc=True)
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        batch = resp.data or []
+        rows.extend(batch)
+        if len(batch) < page_size:
+            break
+        offset += page_size
+    if not rows:
         return pd.DataFrame()
-    return pd.DataFrame(resp.data)
+    return pd.DataFrame(rows)
 
 @st.cache_data(ttl=60)
 def load_pending_ipos() -> pd.DataFrame:
