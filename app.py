@@ -57,31 +57,36 @@ def service_client() -> Client:
 
 @st.cache_data(ttl=60)
 def load_ipos() -> pd.DataFrame:
-    # Supabase / PostgREST caps each response at the project's "max rows"
-    # setting (1,000 by default), so a single .limit() call cannot return
-    # more than that. Page through the table with .range() until a short
-    # page comes back to guarantee we load the entire dataset.
-    page_size = 1000
-    offset = 0
+    # PostgREST caps each response at the project's server-side max-rows setting
+    # (1,000 by default). Page through with .range() until a short page signals
+    # end-of-data. If a page request fails after we already have rows (e.g.
+    # PostgREST returns 416 Range Not Satisfiable when the table size is an
+    # exact multiple of the page size), treat it as end-of-data rather than
+    # crashing the app.
+    PAGE = 1000
     rows: list = []
     client = anon_client()
+    offset = 0
     while True:
-        resp = (
-            client
-            .table("ipos")
-            .select("*")
-            .order("ipo_date", desc=True)
-            .range(offset, offset + page_size - 1)
-            .execute()
-        )
-        batch = resp.data or []
+        try:
+            resp = (
+                client
+                .table("ipos")
+                .select("*")
+                .order("ipo_date", desc=True)
+                .range(offset, offset + PAGE - 1)
+                .execute()
+            )
+            batch = resp.data or []
+        except Exception:
+            if rows:
+                break   # already have data — treat as end of table
+            raise       # nothing fetched yet — surface the real error
         rows.extend(batch)
-        if len(batch) < page_size:
+        if len(batch) < PAGE:
             break
-        offset += page_size
-    if not rows:
-        return pd.DataFrame()
-    return pd.DataFrame(rows)
+        offset += PAGE
+    return pd.DataFrame(rows) if rows else pd.DataFrame()
 
 @st.cache_data(ttl=60)
 def load_pending_ipos() -> pd.DataFrame:
