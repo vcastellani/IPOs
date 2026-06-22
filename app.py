@@ -57,17 +57,36 @@ def service_client() -> Client:
 
 @st.cache_data(ttl=60)
 def load_ipos() -> pd.DataFrame:
-    resp = (
-        anon_client()
-        .table("ipos")
-        .select("*")
-        .order("ipo_date", desc=True)
-        .limit(10000)
-        .execute()
-    )
-    if not resp.data:
-        return pd.DataFrame()
-    return pd.DataFrame(resp.data)
+    # PostgREST caps each response at the project's server-side max-rows setting
+    # (1,000 by default). Page through with .range() until a short page signals
+    # end-of-data. If a page request fails after we already have rows (e.g.
+    # PostgREST returns 416 Range Not Satisfiable when the table size is an
+    # exact multiple of the page size), treat it as end-of-data rather than
+    # crashing the app.
+    PAGE = 1000
+    rows: list = []
+    client = anon_client()
+    offset = 0
+    while True:
+        try:
+            resp = (
+                client
+                .table("ipos")
+                .select("*")
+                .order("ipo_date", desc=True)
+                .range(offset, offset + PAGE - 1)
+                .execute()
+            )
+            batch = resp.data if isinstance(resp.data, list) else []
+        except Exception:
+            if rows:
+                break   # already have data — treat as end of table
+            raise       # nothing fetched yet — surface the real error
+        rows.extend(batch)
+        if len(batch) < PAGE:
+            break
+        offset += PAGE
+    return pd.DataFrame(rows) if rows else pd.DataFrame()
 
 @st.cache_data(ttl=60)
 def load_pending_ipos() -> pd.DataFrame:
@@ -361,14 +380,17 @@ def extract_from_424b4(url: str) -> dict:
 _SEC_HEADERS = {"User-Agent": "SPACTracker/1.0 research@example.com"}
 
 def _sec_get(url: str, timeout: int = 15) -> requests.Response:
-    """GET a data.sec.gov URL with exponential backoff on 429 responses."""
-    delays = [2, 4, 8, 16]
+    """GET a SEC EDGAR URL with exponential backoff on 429 responses."""
+    delays = [10, 30, 60, 120]
     for delay in delays:
         resp = requests.get(url, headers=_SEC_HEADERS, timeout=timeout)
         if resp.status_code != 429:
             resp.raise_for_status()
             return resp
-        time.sleep(delay)
+        # Honour Retry-After header if present; otherwise use our schedule
+        retry_after = resp.headers.get("Retry-After")
+        wait = int(retry_after) if retry_after and retry_after.isdigit() else delay
+        time.sleep(wait)
     # Final attempt — raise descriptive error if still rate-limited
     resp = requests.get(url, headers=_SEC_HEADERS, timeout=timeout)
     if resp.status_code == 429:
@@ -2102,9 +2124,14 @@ if st.session_state.is_admin:
                     st.error(f"Could not save: {e}\n\nEnsure a 'verified' boolean column exists in the ipos table.")
 
             if run_verify:
-                with st.spinner(f"Extracting from {v_tenk_label}…"):
-                    _extracted = extract_from_10k(v_tenk_url)
-                st.session_state["verify_result"] = (v_id, v_tenk_label, _extracted)
+                with st.spinner(f"Extracting from {v_tenk_label}… (SEC may take up to 3 min if rate-limited)"):
+                    try:
+                        _extracted = extract_from_10k(v_tenk_url)
+                        st.session_state["verify_result"] = (v_id, v_tenk_label, _extracted)
+                    except RuntimeError as _re:
+                        st.error(f"SEC EDGAR is rate-limiting requests. Please wait a minute and try again.\n\n{_re}")
+                    except Exception as _e:
+                        st.error(f"Extraction failed: {_e}")
 
             if "verify_result" in st.session_state:
                 _vid, _vlabel, _ext = st.session_state["verify_result"]
