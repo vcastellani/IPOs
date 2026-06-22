@@ -77,7 +77,7 @@ def load_ipos() -> pd.DataFrame:
                 .range(offset, offset + PAGE - 1)
                 .execute()
             )
-            batch = resp.data or []
+            batch = resp.data if isinstance(resp.data, list) else []
         except Exception:
             if rows:
                 break   # already have data — treat as end of table
