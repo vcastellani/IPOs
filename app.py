@@ -1314,6 +1314,15 @@ if not df_dated.empty:
 
     st.markdown("".join(_parts), unsafe_allow_html=True)
     st.caption(f"{int(yearly.sum())} IPO(s) total across {len(yearly)} year(s)")
+    st.markdown(
+        "<p style='text-align:center;color:#9A958C;font-size:11.5px;font-style:italic;"
+        "line-height:1.4;margin:2px auto 0;max-width:640px;"
+        "font-family:system-ui,-apple-system,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;'>"
+        "Note: Annual counts may differ slightly from other SPAC data providers. "
+        "Aetherium Acquisition Corp. is attributed to 2022 and AlphaTime Acquisition Corporation "
+        "to 2023, reflecting the closing of their respective offerings, rather than 2021 and 2022.</p>",
+        unsafe_allow_html=True,
+    )
     st.divider()
 
 # ── SPAC Combinations (coming soon) ───────────────────────────────────────────
