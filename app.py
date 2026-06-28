@@ -1022,7 +1022,8 @@ if "is_admin" not in st.session_state:
 
 with st.sidebar:
     st.title("📈 SPAC Tracker")
-    st.caption("Tracking EDGAR EFFECT filings")
+    st.caption("Tracking Public SPAC Filings")
+    st.caption("IPO data updated on 06-01-2026")
     st.divider()
 
     if not st.session_state.is_admin:
