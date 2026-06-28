@@ -63,6 +63,11 @@ def load_ipos() -> pd.DataFrame:
     # PostgREST returns 416 Range Not Satisfiable when the table size is an
     # exact multiple of the page size), treat it as end-of-data rather than
     # crashing the app.
+    #
+    # IMPORTANT: order by a UNIQUE, total key (id) so paging is stable. Ordering
+    # only by a non-unique column like ipo_date lets Postgres break ties
+    # differently between page requests, which can return the same row on two
+    # pages (a phantom duplicate) and skip another row entirely.
     PAGE = 1000
     rows: list = []
     client = anon_client()
@@ -74,6 +79,7 @@ def load_ipos() -> pd.DataFrame:
                 .table("ipos")
                 .select("*")
                 .order("ipo_date", desc=True)
+                .order("id", desc=True)
                 .range(offset, offset + PAGE - 1)
                 .execute()
             )
@@ -86,7 +92,14 @@ def load_ipos() -> pd.DataFrame:
         if len(batch) < PAGE:
             break
         offset += PAGE
-    return pd.DataFrame(rows) if rows else pd.DataFrame()
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    # Belt-and-suspenders: drop any row that slipped in twice across page
+    # boundaries so a transient paging glitch can never surface as a duplicate.
+    if "id" in df.columns:
+        df = df.drop_duplicates(subset="id").reset_index(drop=True)
+    return df
 
 @st.cache_data(ttl=60)
 def load_pending_ipos() -> pd.DataFrame:
@@ -1917,10 +1930,21 @@ if st.session_state.is_admin:
                 st.markdown("**Delete**")
                 st.warning(f"Permanently delete **{r['company_name']}**?")
                 if st.button("Delete", type="secondary", key="del_btn"):
-                    service_client().table("ipos").delete().eq("id", sel_id).execute()
-                    st.success("Deleted.")
-                    refresh()
-                    st.rerun()
+                    try:
+                        service_client().table("ipos").delete().eq("id", sel_id).execute()
+                        st.success("Deleted.")
+                        refresh()
+                        st.rerun()
+                    except Exception as e:
+                        msg = str(e)
+                        if "foreign key" in msg.lower() or "violates" in msg.lower():
+                            st.error(
+                                f"Could not delete: this record is still referenced by another "
+                                f"table (e.g. a linked PCAOB partner or watchlist entry). "
+                                f"Remove those linked rows first, then delete again.\n\n{msg}"
+                            )
+                        else:
+                            st.error(f"Could not delete: {msg}")
 
             # ── Manage Filings ─────────────────────────────────────────────────
             st.divider()
