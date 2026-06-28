@@ -63,6 +63,11 @@ def load_ipos() -> pd.DataFrame:
     # PostgREST returns 416 Range Not Satisfiable when the table size is an
     # exact multiple of the page size), treat it as end-of-data rather than
     # crashing the app.
+    #
+    # IMPORTANT: order by a UNIQUE, total key (id) so paging is stable. Ordering
+    # only by a non-unique column like ipo_date lets Postgres break ties
+    # differently between page requests, which can return the same row on two
+    # pages (a phantom duplicate) and skip another row entirely.
     PAGE = 1000
     rows: list = []
     client = anon_client()
@@ -74,6 +79,7 @@ def load_ipos() -> pd.DataFrame:
                 .table("ipos")
                 .select("*")
                 .order("ipo_date", desc=True)
+                .order("id", desc=True)
                 .range(offset, offset + PAGE - 1)
                 .execute()
             )
@@ -86,7 +92,14 @@ def load_ipos() -> pd.DataFrame:
         if len(batch) < PAGE:
             break
         offset += PAGE
-    return pd.DataFrame(rows) if rows else pd.DataFrame()
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    # Belt-and-suspenders: drop any row that slipped in twice across page
+    # boundaries so a transient paging glitch can never surface as a duplicate.
+    if "id" in df.columns:
+        df = df.drop_duplicates(subset="id").reset_index(drop=True)
+    return df
 
 @st.cache_data(ttl=60)
 def load_pending_ipos() -> pd.DataFrame:
