@@ -1023,7 +1023,6 @@ if "is_admin" not in st.session_state:
 with st.sidebar:
     st.title("📈 SPAC Tracker")
     st.caption("Tracking Public SPAC Filings")
-    st.caption("IPO data updated on 06-01-2026")
     st.divider()
 
     if not st.session_state.is_admin:
@@ -1054,6 +1053,12 @@ with st.sidebar:
         "<a class='nav-link' href='#spac-ipos'>📊 SPAC IPOs</a>"
         "<span class='nav-dim'>🔀 SPAC Combinations</span>"
         "<a class='nav-link' href='#spac-audit-partners'>🔍 SPAC Audit Partners</a>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        "<p style='color:#B0ABA1;font-size:11px;margin-top:24px;'>"
+        "IPO data updated June 2026</p>",
         unsafe_allow_html=True,
     )
 
@@ -1421,7 +1426,10 @@ if not df.empty:
 if st.session_state.is_admin:
     st.divider()
     st.subheader("Admin Panel")
-    tab_add, tab_edit, tab_verify, tab_new = st.tabs(["Add New Entry", "Edit / Delete", "IPO Verification", "New Filings"])
+    tab_add, tab_edit, tab_verify, tab_new, tab_classify, tab_liq, tab_comb = st.tabs(
+        ["Add New Entry", "Edit / Delete", "IPO Verification", "New Filings",
+         "Classify", "Liquidations", "Combinations"]
+    )
 
     # ── Add ───────────────────────────────────────────────────────────────────
     with tab_add:
@@ -2233,6 +2241,95 @@ if st.session_state.is_admin:
                             st.success("All fields match — safe to mark as verified.")
                         else:
                             st.warning(f"{mismatches} field(s) differ. Review above before marking as verified.")
+
+    # ── Classify (assign each SPAC an outcome) ────────────────────────────────
+    # NOTE: requires an 'outcome' text column (nullable) in the ipos table.
+    # Values: null / "" / "searching" = unclassified; "liquidation"; "combination".
+    def _set_outcome(ipo_id, value):
+        try:
+            service_client().table("ipos").update({"outcome": value}).eq("id", ipo_id).execute()
+            refresh()
+            st.rerun()
+        except Exception as e:
+            st.error(f"Could not update outcome: {e}\n\nEnsure an 'outcome' text column exists in the ipos table.")
+
+    def _is_unclassified(val):
+        return val is None or (isinstance(val, float) and pd.isna(val)) or str(val).strip().lower() in ("", "searching")
+
+    with tab_classify:
+        st.markdown("#### Classify SPAC Outcomes")
+        st.caption("SPACs awaiting classification. Choose an outcome to move each one to its tab.")
+        _cdf = load_ipos()
+        if _cdf.empty:
+            st.info("No SPAC IPOs in the database yet.")
+        else:
+            if "outcome" in _cdf.columns:
+                _unclassified = _cdf[_cdf["outcome"].apply(_is_unclassified)]
+            else:
+                _unclassified = _cdf  # column not added yet → everything is unclassified
+            _unclassified = _unclassified.sort_values("company_name")
+
+            _search = st.text_input("Filter by company name", key="classify_search", placeholder="Type to filter…")
+            if _search:
+                _unclassified = _unclassified[
+                    _unclassified["company_name"].str.contains(_search, case=False, na=False)
+                ]
+
+            _total = len(_unclassified)
+            st.caption(f"{_total} SPAC(s) awaiting classification.")
+
+            _LIMIT = 50
+            for _, _crow in _unclassified.head(_LIMIT).iterrows():
+                _cid = _crow["id"]
+                c1, c2, c3, c4 = st.columns([5, 2, 2, 2])
+                with c1:
+                    st.write(f"**{_crow.get('company_name', '')}**")
+                with c2:
+                    _d = _crow.get("ipo_date")
+                    st.write(str(_d)[:10] if _d else "—")
+                with c3:
+                    if st.button("Liquidation", key=f"cls_liq_{_cid}", use_container_width=True):
+                        _set_outcome(_cid, "liquidation")
+                with c4:
+                    if st.button("Combination", key=f"cls_comb_{_cid}", use_container_width=True):
+                        _set_outcome(_cid, "combination")
+
+            if _total > _LIMIT:
+                st.caption(f"Showing first {_LIMIT} of {_total}. Use the filter above to narrow the list.")
+
+    # ── Liquidations (skeleton) ───────────────────────────────────────────────
+    def _outcome_view(outcome_value, heading):
+        _odf = load_ipos()
+        if _odf.empty or "outcome" not in _odf.columns:
+            st.info("No SPACs classified yet.")
+            return
+        _sel = _odf[_odf["outcome"].astype(str).str.strip().str.lower() == outcome_value].sort_values("company_name")
+        if _sel.empty:
+            st.info(f"No SPACs classified as {heading.lower()} yet.")
+            return
+        st.caption(f"{len(_sel)} SPAC(s) classified as {heading.lower()}.")
+        for _, _orow in _sel.iterrows():
+            _oid = _orow["id"]
+            oc1, oc2, oc3 = st.columns([6, 2, 2])
+            with oc1:
+                st.write(f"**{_orow.get('company_name', '')}**  ·  CIK {_orow.get('cik', '')}")
+            with oc2:
+                _d = _orow.get("ipo_date")
+                st.write(str(_d)[:10] if _d else "—")
+            with oc3:
+                if st.button("Reset", key=f"reset_{outcome_value}_{_oid}", use_container_width=True,
+                             help="Move back to the Classify tab"):
+                    _set_outcome(_oid, None)
+
+    with tab_liq:
+        st.markdown("#### Liquidations")
+        st.caption("Detailed liquidation data and scrapes will be added here. Skeleton for now.")
+        _outcome_view("liquidation", "Liquidations")
+
+    with tab_comb:
+        st.markdown("#### Combinations")
+        st.caption("Detailed combination data and scrapes will be added here. Skeleton for now.")
+        _outcome_view("combination", "Combinations")
 
 # ── SPAC Audit Partners ────────────────────────────────────────────────────────
 
