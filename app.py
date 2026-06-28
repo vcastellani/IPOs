@@ -2267,7 +2267,7 @@ if st.session_state.is_admin:
                 _unclassified = _cdf[_cdf["outcome"].apply(_is_unclassified)]
             else:
                 _unclassified = _cdf  # column not added yet → everything is unclassified
-            _unclassified = _unclassified.sort_values("company_name")
+            _unclassified = _unclassified.sort_values("ipo_date", ascending=False, na_position="last")
 
             _search = st.text_input("Filter by company name", key="classify_search", placeholder="Type to filter…")
             if _search:
