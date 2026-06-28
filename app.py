@@ -1023,7 +1023,6 @@ if "is_admin" not in st.session_state:
 with st.sidebar:
     st.title("📈 SPAC Tracker")
     st.caption("Tracking Public SPAC Filings")
-    st.caption("IPO data updated on 06-01-2026")
     st.divider()
 
     if not st.session_state.is_admin:
@@ -1054,6 +1053,12 @@ with st.sidebar:
         "<a class='nav-link' href='#spac-ipos'>📊 SPAC IPOs</a>"
         "<span class='nav-dim'>🔀 SPAC Combinations</span>"
         "<a class='nav-link' href='#spac-audit-partners'>🔍 SPAC Audit Partners</a>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        "<p style='color:#B0ABA1;font-size:11px;margin-top:24px;'>"
+        "IPO data updated June 2026</p>",
         unsafe_allow_html=True,
     )
 
