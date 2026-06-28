@@ -1917,10 +1917,21 @@ if st.session_state.is_admin:
                 st.markdown("**Delete**")
                 st.warning(f"Permanently delete **{r['company_name']}**?")
                 if st.button("Delete", type="secondary", key="del_btn"):
-                    service_client().table("ipos").delete().eq("id", sel_id).execute()
-                    st.success("Deleted.")
-                    refresh()
-                    st.rerun()
+                    try:
+                        service_client().table("ipos").delete().eq("id", sel_id).execute()
+                        st.success("Deleted.")
+                        refresh()
+                        st.rerun()
+                    except Exception as e:
+                        msg = str(e)
+                        if "foreign key" in msg.lower() or "violates" in msg.lower():
+                            st.error(
+                                f"Could not delete: this record is still referenced by another "
+                                f"table (e.g. a linked PCAOB partner or watchlist entry). "
+                                f"Remove those linked rows first, then delete again.\n\n{msg}"
+                            )
+                        else:
+                            st.error(f"Could not delete: {msg}")
 
             # ── Manage Filings ─────────────────────────────────────────────────
             st.divider()
