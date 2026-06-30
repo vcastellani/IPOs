@@ -2408,9 +2408,124 @@ if st.session_state.is_admin:
                              help="Move back to the Classify tab"):
                     _set_outcome(_oid, None)
 
+    # Shared editor for a single liquidated SPAC (used by both Input and Saved tabs)
+    def _has_liquidation_data(row):
+        _a = row.get("liquidation_last_trading_date")
+        _b = row.get("liquidation_redemption_price")
+        _a_set = _a not in (None, "") and pd.notna(_a)
+        _b_set = _b not in (None, "") and pd.notna(_b)
+        return bool(_a_set or _b_set)
+
+    def _render_liquidation_editor(lrow):
+        _liq_id = lrow["id"]
+        _cik    = lrow.get("cik")
+
+        if _cik:
+            _edgar_url = (
+                "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany"
+                f"&CIK={_cik}&type=8-K&dateb=&owner=include&count=40"
+            )
+            st.markdown(f"🔗 [View EDGAR 8-K filings for {lrow.get('company_name','')}]({_edgar_url})")
+        else:
+            st.warning("No CIK on record for this SPAC — cannot build an EDGAR link or scrape filings.")
+
+        _ltd_key = f"liq_ltd_{_liq_id}"
+        _rp_key  = f"liq_rp_{_liq_id}"
+
+        # Scrape the most recent 8-K
+        if st.button("Find & scrape last 8-K", key=f"liq_scrape_{_liq_id}", type="primary"):
+            if not _cik:
+                st.error("No CIK available for this SPAC.")
+            else:
+                with st.spinner("Finding the most recent 8-K and extracting… (SEC may take up to 3 min if rate-limited)"):
+                    try:
+                        _info = find_last_8k(str(_cik))
+                        _url  = _info.get("latest_8k_url")
+                        if not _url:
+                            st.error("No 8-K filings found for this SPAC on EDGAR.")
+                        else:
+                            _ext = extract_liquidation_from_8k(_url)
+                            _ext["url"] = _url
+                            st.session_state[f"liq_ext_{_liq_id}"] = _ext
+                            # Seed the editable widgets with the scraped values
+                            if _ext.get("last_trading_date"):
+                                try:
+                                    st.session_state[_ltd_key] = pd.to_datetime(_ext["last_trading_date"]).date()
+                                except Exception:
+                                    pass
+                            if _ext.get("redemption_price") is not None:
+                                try:
+                                    st.session_state[_rp_key] = float(_ext["redemption_price"])
+                                except Exception:
+                                    pass
+                            st.rerun()
+                    except RuntimeError as _re:
+                        st.error(f"SEC EDGAR is rate-limiting requests. Please wait a minute and try again.\n\n{_re}")
+                    except Exception as _e:
+                        st.error(f"Could not scrape: {_e}")
+
+        _scraped = st.session_state.get(f"liq_ext_{_liq_id}", {})
+        if _scraped.get("url"):
+            st.caption(f"Scraped from: {_scraped['url']}")
+
+        # Initialise widget state from stored DB values on first view
+        if _ltd_key not in st.session_state:
+            _db_ltd = lrow.get("liquidation_last_trading_date")
+            _init_date = None
+            if _db_ltd not in (None, "") and pd.notna(_db_ltd):
+                try:
+                    _init_date = pd.to_datetime(str(_db_ltd)).date()
+                except Exception:
+                    _init_date = None
+            st.session_state[_ltd_key] = _init_date
+        if _rp_key not in st.session_state:
+            _db_rp = lrow.get("liquidation_redemption_price")
+            try:
+                st.session_state[_rp_key] = float(_db_rp) if _db_rp not in (None, "") and pd.notna(_db_rp) else 0.0
+            except (ValueError, TypeError):
+                st.session_state[_rp_key] = 0.0
+
+        fc1, fc2 = st.columns(2)
+        with fc1:
+            _ltd_val = st.date_input(
+                "Last trading date", min_value=date(2000, 1, 1), max_value=date(2035, 12, 31),
+                key=_ltd_key, format="YYYY-MM-DD",
+            )
+        with fc2:
+            _rp_val = st.number_input("Redemption price ($/share)", step=0.01, format="%.4f", key=_rp_key)
+
+        bcol1, bcol2 = st.columns(2)
+        with bcol1:
+            if st.button("Save liquidation data", key=f"liq_save_{_liq_id}", type="primary"):
+                try:
+                    _patch = {
+                        "liquidation_last_trading_date": _ltd_val.isoformat() if _ltd_val else None,
+                        "liquidation_redemption_price":  float(_rp_val) if _rp_val else None,
+                    }
+                    if _scraped.get("url"):
+                        _patch["liquidation_8k_url"] = _scraped["url"]
+                    service_client().table("ipos").update(_patch).eq("id", _liq_id).execute()
+                    for _k in (f"liq_ext_{_liq_id}", _ltd_key, _rp_key):
+                        st.session_state.pop(_k, None)
+                    st.success("Saved.")
+                    refresh()
+                    st.rerun()
+                except Exception as _e:
+                    st.error(
+                        f"Could not save: {_e}\n\nEnsure the ipos table has columns "
+                        "'liquidation_last_trading_date' (date), "
+                        "'liquidation_redemption_price' (numeric), and "
+                        "'liquidation_8k_url' (text)."
+                    )
+        with bcol2:
+            if st.button("Reset to Classify", key=f"liq_reset_{_liq_id}",
+                         help="Move back to the Classify tab"):
+                for _k in (f"liq_ext_{_liq_id}", _ltd_key, _rp_key):
+                    st.session_state.pop(_k, None)
+                _set_outcome(_liq_id, None)
+
     with tab_liq:
         st.markdown("#### Liquidations")
-        st.caption("Select a liquidated SPAC, then scrape its final 8-K for the last trading date and redemption price.")
         _ldf = load_ipos()
         if _ldf.empty or "outcome" not in _ldf.columns:
             st.info("No SPACs classified yet.")
@@ -2421,90 +2536,58 @@ if st.session_state.is_admin:
             if _liq.empty:
                 st.info("No SPACs classified as liquidation yet.")
             else:
-                st.caption(f"{len(_liq)} SPAC(s) classified as liquidation.")
-                _liq_opts  = {f"{r['company_name']}  (ID {r['id']})": r["id"] for _, r in _liq.iterrows()}
-                _liq_label = st.selectbox("Select a liquidated SPAC", list(_liq_opts.keys()), key="liq_select")
-                _liq_id    = _liq_opts[_liq_label]
-                _lrow      = _liq[_liq["id"] == _liq_id].iloc[0]
-                _cik       = _lrow.get("cik")
-
-                # EDGAR filings page link
-                if _cik:
-                    _edgar_url = (
-                        "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany"
-                        f"&CIK={_cik}&type=8-K&dateb=&owner=include&count=40"
-                    )
-                    st.markdown(f"🔗 [View EDGAR 8-K filings for {_lrow.get('company_name','')}]({_edgar_url})")
+                _has_cols = ("liquidation_last_trading_date" in _liq.columns
+                             or "liquidation_redemption_price" in _liq.columns)
+                if _has_cols:
+                    _saved_mask = _liq.apply(_has_liquidation_data, axis=1)
                 else:
-                    st.warning("No CIK on record for this SPAC — cannot build an EDGAR link or scrape filings.")
+                    _saved_mask = pd.Series(False, index=_liq.index)
+                _pending = _liq[~_saved_mask]
+                _saved   = _liq[_saved_mask]
 
-                # Scrape the most recent 8-K
-                if st.button("Find & scrape last 8-K", key=f"liq_scrape_{_liq_id}", type="primary"):
-                    if not _cik:
-                        st.error("No CIK available for this SPAC.")
+                _sub_input, _sub_table = st.tabs(
+                    [f"Input ({len(_pending)})", f"Saved Liquidations ({len(_saved)})"]
+                )
+
+                # ── Input: liquidations still awaiting data ──────────────────
+                with _sub_input:
+                    st.caption("Select a liquidated SPAC, then scrape its final 8-K for the last "
+                               "trading date and redemption price. Saved entries move to the table tab.")
+                    if _pending.empty:
+                        st.info("No liquidations awaiting data entry.")
                     else:
-                        with st.spinner("Finding the most recent 8-K and extracting… (SEC may take up to 3 min if rate-limited)"):
-                            try:
-                                _info = find_last_8k(str(_cik))
-                                _url  = _info.get("latest_8k_url")
-                                if not _url:
-                                    st.error("No 8-K filings found for this SPAC on EDGAR.")
-                                else:
-                                    _ext = extract_liquidation_from_8k(_url)
-                                    _ext["url"] = _url
-                                    st.session_state[f"liq_ext_{_liq_id}"] = _ext
-                            except RuntimeError as _re:
-                                st.error(f"SEC EDGAR is rate-limiting requests. Please wait a minute and try again.\n\n{_re}")
-                            except Exception as _e:
-                                st.error(f"Could not scrape: {_e}")
+                        _pe_opts  = {f"{r['company_name']}  (ID {r['id']})": r["id"] for _, r in _pending.iterrows()}
+                        _pe_label = st.selectbox("Select a liquidated SPAC", list(_pe_opts.keys()), key="liq_input_select")
+                        _pe_row   = _pending[_pending["id"] == _pe_opts[_pe_label]].iloc[0]
+                        _render_liquidation_editor(_pe_row)
 
-                # Defaults: freshly scraped values win, else fall back to stored DB values
-                _scraped = st.session_state.get(f"liq_ext_{_liq_id}", {})
-                if _scraped.get("url"):
-                    st.caption(f"Scraped from: {_scraped['url']}")
-
-                _def_ltd = _scraped.get("last_trading_date") or (_lrow.get("liquidation_last_trading_date") or "")
-                _def_rp  = _scraped.get("redemption_price")
-                if _def_rp is None:
-                    _def_rp = _lrow.get("liquidation_redemption_price")
-                try:
-                    _def_rp = float(_def_rp) if _def_rp not in (None, "") and pd.notna(_def_rp) else 0.0
-                except (ValueError, TypeError):
-                    _def_rp = 0.0
-
-                fc1, fc2 = st.columns(2)
-                with fc1:
-                    _ltd_val = st.text_input("Last trading date (YYYY-MM-DD)",
-                                             value=str(_def_ltd)[:10] if _def_ltd else "")
-                with fc2:
-                    _rp_val = st.number_input("Redemption price ($/share)", value=_def_rp, step=0.01, format="%.4f")
-
-                bcol1, bcol2 = st.columns(2)
-                with bcol1:
-                    if st.button("Save liquidation data", key=f"liq_save_{_liq_id}", type="primary"):
-                        try:
-                            _patch = {
-                                "liquidation_last_trading_date": _ltd_val.strip() or None,
-                                "liquidation_redemption_price":  float(_rp_val) if _rp_val else None,
-                            }
-                            if _scraped.get("url"):
-                                _patch["liquidation_8k_url"] = _scraped["url"]
-                            service_client().table("ipos").update(_patch).eq("id", _liq_id).execute()
-                            st.session_state.pop(f"liq_ext_{_liq_id}", None)
-                            st.success("Saved.")
-                            refresh()
-                            st.rerun()
-                        except Exception as _e:
-                            st.error(
-                                f"Could not save: {_e}\n\nEnsure the ipos table has columns "
-                                "'liquidation_last_trading_date' (date/text), "
-                                "'liquidation_redemption_price' (numeric), and "
-                                "'liquidation_8k_url' (text)."
-                            )
-                with bcol2:
-                    if st.button("Reset to Classify", key=f"liq_reset_{_liq_id}",
-                                 help="Move back to the Classify tab"):
-                        _set_outcome(_liq_id, None)
+                # ── Saved Liquidations: completed records ────────────────────
+                with _sub_table:
+                    if _saved.empty:
+                        st.info("No saved liquidations yet.")
+                    else:
+                        def _scol(name):
+                            return _saved[name].values if name in _saved.columns else [None] * len(_saved)
+                        _disp = pd.DataFrame({
+                            "Company":           _saved["company_name"].values,
+                            "CIK":               _saved["cik"].values,
+                            "IPO Date":          _saved["ipo_date"].astype(str).str[:10].values,
+                            "Last Trading Date": _scol("liquidation_last_trading_date"),
+                            "Redemption Price":  _scol("liquidation_redemption_price"),
+                            "8-K":               _scol("liquidation_8k_url"),
+                        })
+                        st.dataframe(
+                            _disp, hide_index=True, use_container_width=True,
+                            column_config={
+                                "8-K": st.column_config.LinkColumn("8-K", display_text="View"),
+                                "Redemption Price": st.column_config.NumberColumn("Redemption Price", format="$%.2f"),
+                            },
+                        )
+                        with st.expander("Edit a saved liquidation"):
+                            _se_opts  = {f"{r['company_name']}  (ID {r['id']})": r["id"] for _, r in _saved.iterrows()}
+                            _se_label = st.selectbox("Select entry to edit", list(_se_opts.keys()), key="liq_saved_select")
+                            _se_row   = _saved[_saved["id"] == _se_opts[_se_label]].iloc[0]
+                            _render_liquidation_editor(_se_row)
 
     with tab_comb:
         st.markdown("#### Combinations")
