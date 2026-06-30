@@ -572,6 +572,93 @@ def extract_from_8k(url: str) -> dict:
 
     return result
 
+
+def find_last_8k(cik: str) -> dict:
+    """Return the most recent 8-K filing for a CIK (and a few recent ones).
+
+    SPAC liquidation/redemption details are typically announced in the last
+    8-K filed before the trust is dissolved.
+    """
+    cik_int = int(cik)
+    resp = _sec_get(f"https://data.sec.gov/submissions/CIK{cik_int:010d}.json")
+    data = resp.json()
+    filings    = data.get("filings", {}).get("recent", {})
+    forms      = filings.get("form", [])
+    dates      = filings.get("filingDate", [])
+    accessions = filings.get("accessionNumber", [])
+    docs       = filings.get("primaryDocument", [])
+
+    eightks = []
+    for i, form in enumerate(forms):
+        if form == "8-K":
+            accession = accessions[i].replace("-", "")
+            base = f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{accession}/{docs[i]}"
+            eightks.append((dates[i], base))
+
+    # Most recent first
+    eightks.sort(key=lambda x: x[0], reverse=True)
+    recent = [{"date": d, "url": u} for d, u in eightks[:5]]
+    return {"latest_8k_url": recent[0]["url"] if recent else None, "recent_8ks": recent}
+
+
+def extract_liquidation_from_8k(url: str) -> dict:
+    """Extract last trading date and redemption price from a SPAC liquidation 8-K."""
+    resp = _sec_get(url, timeout=30)
+    text = re.sub(r"<[^>]+>", " ", resp.text)
+    text = re.sub(r"https?://\S+|www\.\S+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    excerpt = text[:40000]
+
+    prompt = (
+        "Extract these fields from a SPAC liquidation / trust redemption 8-K filing. "
+        "Return ONLY a raw JSON object:\n\n"
+        "{\n"
+        '  "last_trading_date": "2024-01-15",\n'
+        '  "redemption_price": 10.15\n'
+        "}\n\n"
+        "Rules:\n"
+        '- last_trading_date: the last date the SPAC\'s securities traded (or will trade) before '
+        'redemption/delisting, in YYYY-MM-DD format. Look for phrases like "last day of trading", '
+        '"will cease trading", "suspended from trading", "delisted", or a stated "redemption date". '
+        "null if not found.\n"
+        '- redemption_price: the per-share redemption / liquidation amount paid to public shareholders '
+        'as a float (e.g. 10.15). Look for "redemption price of approximately $10.15 per share", '
+        '"per-share redemption amount", "$10.XX per public share". null if not found.\n\n'
+        "Filing text:\n" + excerpt
+    )
+
+    msg = anthropic_client().messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=300,
+        system=[{
+            "type": "text",
+            "text": "You are a financial document parser for SEC filings. Output ONLY a raw JSON object. "
+                    "No explanation, no reasoning, no markdown — just the JSON object starting with { and ending with }.",
+            "cache_control": {"type": "ephemeral"},
+        }],
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw = msg.content[0].text.strip()
+    json_match = re.search(r'\{[^{}]*\}', raw, re.DOTALL)
+    if json_match:
+        raw = json_match.group(0)
+    elif raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw.strip())
+    try:
+        result = json.loads(raw)
+    except json.JSONDecodeError:
+        result = {}
+
+    # Normalize compact date strings (e.g. "20240115" → "2024-01-15")
+    _dv = result.get("last_trading_date")
+    if isinstance(_dv, str) and re.fullmatch(r'\d{8}', _dv):
+        result["last_trading_date"] = f"{_dv[:4]}-{_dv[4:6]}-{_dv[6:]}"
+
+    return result
+
+
 def _extract_registered_securities(raw_html: str) -> str:
     """Extract the Section 12(b) registered securities block from a 10-K.
     Tries HTML table parsing first; falls back to stripped-text extraction.
@@ -2323,8 +2410,101 @@ if st.session_state.is_admin:
 
     with tab_liq:
         st.markdown("#### Liquidations")
-        st.caption("Detailed liquidation data and scrapes will be added here. Skeleton for now.")
-        _outcome_view("liquidation", "Liquidations")
+        st.caption("Select a liquidated SPAC, then scrape its final 8-K for the last trading date and redemption price.")
+        _ldf = load_ipos()
+        if _ldf.empty or "outcome" not in _ldf.columns:
+            st.info("No SPACs classified yet.")
+        else:
+            _liq = _ldf[_ldf["outcome"].astype(str).str.strip().str.lower() == "liquidation"].sort_values(
+                "ipo_date", ascending=False, na_position="last"
+            )
+            if _liq.empty:
+                st.info("No SPACs classified as liquidation yet.")
+            else:
+                st.caption(f"{len(_liq)} SPAC(s) classified as liquidation.")
+                _liq_opts  = {f"{r['company_name']}  (ID {r['id']})": r["id"] for _, r in _liq.iterrows()}
+                _liq_label = st.selectbox("Select a liquidated SPAC", list(_liq_opts.keys()), key="liq_select")
+                _liq_id    = _liq_opts[_liq_label]
+                _lrow      = _liq[_liq["id"] == _liq_id].iloc[0]
+                _cik       = _lrow.get("cik")
+
+                # EDGAR filings page link
+                if _cik:
+                    _edgar_url = (
+                        "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany"
+                        f"&CIK={_cik}&type=8-K&dateb=&owner=include&count=40"
+                    )
+                    st.markdown(f"🔗 [View EDGAR 8-K filings for {_lrow.get('company_name','')}]({_edgar_url})")
+                else:
+                    st.warning("No CIK on record for this SPAC — cannot build an EDGAR link or scrape filings.")
+
+                # Scrape the most recent 8-K
+                if st.button("Find & scrape last 8-K", key=f"liq_scrape_{_liq_id}", type="primary"):
+                    if not _cik:
+                        st.error("No CIK available for this SPAC.")
+                    else:
+                        with st.spinner("Finding the most recent 8-K and extracting… (SEC may take up to 3 min if rate-limited)"):
+                            try:
+                                _info = find_last_8k(str(_cik))
+                                _url  = _info.get("latest_8k_url")
+                                if not _url:
+                                    st.error("No 8-K filings found for this SPAC on EDGAR.")
+                                else:
+                                    _ext = extract_liquidation_from_8k(_url)
+                                    _ext["url"] = _url
+                                    st.session_state[f"liq_ext_{_liq_id}"] = _ext
+                            except RuntimeError as _re:
+                                st.error(f"SEC EDGAR is rate-limiting requests. Please wait a minute and try again.\n\n{_re}")
+                            except Exception as _e:
+                                st.error(f"Could not scrape: {_e}")
+
+                # Defaults: freshly scraped values win, else fall back to stored DB values
+                _scraped = st.session_state.get(f"liq_ext_{_liq_id}", {})
+                if _scraped.get("url"):
+                    st.caption(f"Scraped from: {_scraped['url']}")
+
+                _def_ltd = _scraped.get("last_trading_date") or (_lrow.get("liquidation_last_trading_date") or "")
+                _def_rp  = _scraped.get("redemption_price")
+                if _def_rp is None:
+                    _def_rp = _lrow.get("liquidation_redemption_price")
+                try:
+                    _def_rp = float(_def_rp) if _def_rp not in (None, "") and pd.notna(_def_rp) else 0.0
+                except (ValueError, TypeError):
+                    _def_rp = 0.0
+
+                fc1, fc2 = st.columns(2)
+                with fc1:
+                    _ltd_val = st.text_input("Last trading date (YYYY-MM-DD)",
+                                             value=str(_def_ltd)[:10] if _def_ltd else "")
+                with fc2:
+                    _rp_val = st.number_input("Redemption price ($/share)", value=_def_rp, step=0.01, format="%.4f")
+
+                bcol1, bcol2 = st.columns(2)
+                with bcol1:
+                    if st.button("Save liquidation data", key=f"liq_save_{_liq_id}", type="primary"):
+                        try:
+                            _patch = {
+                                "liquidation_last_trading_date": _ltd_val.strip() or None,
+                                "liquidation_redemption_price":  float(_rp_val) if _rp_val else None,
+                            }
+                            if _scraped.get("url"):
+                                _patch["liquidation_8k_url"] = _scraped["url"]
+                            service_client().table("ipos").update(_patch).eq("id", _liq_id).execute()
+                            st.session_state.pop(f"liq_ext_{_liq_id}", None)
+                            st.success("Saved.")
+                            refresh()
+                            st.rerun()
+                        except Exception as _e:
+                            st.error(
+                                f"Could not save: {_e}\n\nEnsure the ipos table has columns "
+                                "'liquidation_last_trading_date' (date/text), "
+                                "'liquidation_redemption_price' (numeric), and "
+                                "'liquidation_8k_url' (text)."
+                            )
+                with bcol2:
+                    if st.button("Reset to Classify", key=f"liq_reset_{_liq_id}",
+                                 help="Move back to the Classify tab"):
+                        _set_outcome(_liq_id, None)
 
     with tab_comb:
         st.markdown("#### Combinations")
