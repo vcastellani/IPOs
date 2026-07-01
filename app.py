@@ -2355,11 +2355,18 @@ if st.session_state.is_admin:
             else:
                 _unclassified = _cdf  # column not added yet → everything is unclassified
             _sort_order = st.radio(
-                "Sort by IPO date", ["Oldest first", "Newest first"],
+                "Sort by IPO year", ["Oldest first", "Newest first"],
                 index=0, horizontal=True, key="classify_sort",
             )
+            # Group by IPO year (direction from the toggle), then alphabetically within each year
+            _unclassified = _unclassified.copy()
+            _unclassified["_ipo_year"] = pd.to_datetime(
+                _unclassified["ipo_date"], errors="coerce"
+            ).dt.year
             _unclassified = _unclassified.sort_values(
-                "ipo_date", ascending=(_sort_order == "Oldest first"), na_position="last"
+                ["_ipo_year", "company_name"],
+                ascending=[(_sort_order == "Oldest first"), True],
+                na_position="last",
             )
 
             _search = st.text_input("Filter by company name", key="classify_search", placeholder="Type to filter…")
