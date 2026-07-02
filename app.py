@@ -133,9 +133,6 @@ def load_new_filings() -> pd.DataFrame:
     return pd.DataFrame(resp.data)
 
 
-@st.cache_data(ttl=60)
-
-
 @st.cache_data(ttl=300)
 def load_spac_audit_partners() -> pd.DataFrame:
     """Load pcaob_partners rows only for partner IDs referenced in the ipos table."""
@@ -1033,7 +1030,18 @@ def extract_from_10k(url: str) -> dict:
 
 
 def refresh():
-    st.cache_data.clear()
+    """Clear caches derived from the database after a write.
+
+    Deliberately does NOT clear load_pcaob_form_ap — that cache holds the
+    large PCAOB Form AP download (24h TTL) whose contents don't change when
+    our own tables do; clearing it forces a multi-minute re-download.
+    """
+    load_ipos.clear()
+    load_pending_ipos.clear()
+    load_new_filings.clear()
+    load_spac_audit_partners.clear()
+    load_known_auditors.clear()
+    load_known_underwriters.clear()
 
 def _idx(lst, val, default=0):
     try:
