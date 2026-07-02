@@ -1,5 +1,8 @@
-requests>=2.31.0
-streamlit>=1.32.0
-supabase>=2.3.0
-pandas>=2.0.0
-anthropic
+# Pinned so Streamlit Cloud redeploys are reproducible — a routine redeploy
+# must never silently pull a Streamlit release that removes APIs we use
+# (st.components.v1.html, use_container_width). Bump deliberately.
+requests==2.34.2
+streamlit==1.58.0
+supabase==2.31.0
+pandas==3.0.3
+anthropic==0.115.1

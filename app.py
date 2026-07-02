@@ -173,7 +173,7 @@ def load_known_underwriters() -> list[str]:
 def load_pcaob_form_ap() -> pd.DataFrame:
     r = requests.get(
         "https://pcaobus.org/assets/PCAOBFiles/FirmFilings.zip",
-        headers={"User-Agent": "SPACTracker/1.0 research@example.com"},
+        headers=_SEC_HEADERS,
         timeout=120,
     )
     r.raise_for_status()
@@ -387,7 +387,11 @@ def extract_from_424b4(url: str) -> dict:
         raise ValueError(f"Claude returned non-JSON (first 300 chars): {raw[:300]}") from e
 
 
-_SEC_HEADERS = {"User-Agent": "SPACTracker/1.0 research@example.com"}
+# SEC fair-access policy requires a User-Agent with real contact info.
+# Set edgar_user_agent = "SPACTracker/1.0 you@example.com" in Streamlit secrets.
+_SEC_HEADERS = {
+    "User-Agent": st.secrets.get("edgar_user_agent", "SPACTracker/1.0 research@example.com")
+}
 
 def _sec_get(url: str, timeout: int = 15) -> requests.Response:
     """GET a SEC EDGAR URL with exponential backoff on 429 responses."""
