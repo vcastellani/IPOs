@@ -133,9 +133,6 @@ def load_new_filings() -> pd.DataFrame:
     return pd.DataFrame(resp.data)
 
 
-@st.cache_data(ttl=60)
-
-
 @st.cache_data(ttl=300)
 def load_spac_audit_partners() -> pd.DataFrame:
     """Load pcaob_partners rows only for partner IDs referenced in the ipos table."""
@@ -176,7 +173,7 @@ def load_known_underwriters() -> list[str]:
 def load_pcaob_form_ap() -> pd.DataFrame:
     r = requests.get(
         "https://pcaobus.org/assets/PCAOBFiles/FirmFilings.zip",
-        headers={"User-Agent": "SPACTracker/1.0 research@example.com"},
+        headers=_SEC_HEADERS,
         timeout=120,
     )
     r.raise_for_status()
@@ -390,7 +387,11 @@ def extract_from_424b4(url: str) -> dict:
         raise ValueError(f"Claude returned non-JSON (first 300 chars): {raw[:300]}") from e
 
 
-_SEC_HEADERS = {"User-Agent": "SPACTracker/1.0 research@example.com"}
+# SEC fair-access policy requires a User-Agent with real contact info.
+# Set edgar_user_agent = "SPACTracker/1.0 you@example.com" in Streamlit secrets.
+_SEC_HEADERS = {
+    "User-Agent": st.secrets.get("edgar_user_agent", "SPACTracker/1.0 research@example.com")
+}
 
 def _sec_get(url: str, timeout: int = 15) -> requests.Response:
     """GET a SEC EDGAR URL with exponential backoff on 429 responses."""
@@ -1033,7 +1034,18 @@ def extract_from_10k(url: str) -> dict:
 
 
 def refresh():
-    st.cache_data.clear()
+    """Clear caches derived from the database after a write.
+
+    Deliberately does NOT clear load_pcaob_form_ap — that cache holds the
+    large PCAOB Form AP download (24h TTL) whose contents don't change when
+    our own tables do; clearing it forces a multi-minute re-download.
+    """
+    load_ipos.clear()
+    load_pending_ipos.clear()
+    load_new_filings.clear()
+    load_spac_audit_partners.clear()
+    load_known_auditors.clear()
+    load_known_underwriters.clear()
 
 def _idx(lst, val, default=0):
     try:
@@ -1513,9 +1525,9 @@ if not df.empty:
 if st.session_state.is_admin:
     st.divider()
     st.subheader("Admin Panel")
-    tab_add, tab_edit, tab_verify, tab_new, tab_classify, tab_liq, tab_comb = st.tabs(
+    tab_add, tab_edit, tab_verify, tab_new, tab_classify, tab_search_spacs, tab_liq, tab_comb = st.tabs(
         ["Add New Entry", "Edit / Delete", "IPO Verification", "New Filings",
-         "Classify", "Liquidations", "Combinations"]
+         "Classify", "Searching", "Liquidations", "Combinations"]
     )
 
     # ── Add ───────────────────────────────────────────────────────────────────
@@ -2341,7 +2353,9 @@ if st.session_state.is_admin:
             st.error(f"Could not update outcome: {e}\n\nEnsure an 'outcome' text column exists in the ipos table.")
 
     def _is_unclassified(val):
-        return val is None or (isinstance(val, float) and pd.isna(val)) or str(val).strip().lower() in ("", "searching")
+        # An explicit "searching" outcome is a real classification (Searching tab),
+        # not an unclassified state — only null/empty rows stay in the Classify queue.
+        return val is None or (isinstance(val, float) and pd.isna(val)) or str(val).strip() == ""
 
     with tab_classify:
         st.markdown("#### Classify SPAC Outcomes")
@@ -2381,21 +2395,58 @@ if st.session_state.is_admin:
             _LIMIT = 50
             for _, _crow in _unclassified.head(_LIMIT).iterrows():
                 _cid = _crow["id"]
-                c1, c2, c3, c4 = st.columns([5, 2, 2, 2])
+                c1, c2, c3, c4, c5 = st.columns([4, 2, 2, 2, 2])
                 with c1:
                     st.write(f"**{_crow.get('company_name', '')}**")
                 with c2:
                     _d = _crow.get("ipo_date")
                     st.write(str(_d)[:10] if _d else "—")
                 with c3:
+                    if st.button("Searching", key=f"cls_srch_{_cid}", use_container_width=True):
+                        _set_outcome(_cid, "searching")
+                with c4:
                     if st.button("Liquidation", key=f"cls_liq_{_cid}", use_container_width=True):
                         _set_outcome(_cid, "liquidation")
-                with c4:
+                with c5:
                     if st.button("Combination", key=f"cls_comb_{_cid}", use_container_width=True):
                         _set_outcome(_cid, "combination")
 
             if _total > _LIMIT:
                 st.caption(f"Showing first {_LIMIT} of {_total}. Use the filter above to narrow the list.")
+
+    # ── Searching (holding pen until a definitive outcome) ───────────────────
+    with tab_search_spacs:
+        st.markdown("#### Searching")
+        st.caption("SPACs still seeking a target. Assign Liquidation or Combination once their outcome is known.")
+        _sdf = load_ipos()
+        if _sdf.empty or "outcome" not in _sdf.columns:
+            st.info("No SPACs classified yet.")
+        else:
+            _searching = _sdf[_sdf["outcome"].astype(str).str.strip().str.lower() == "searching"].copy()
+            if _searching.empty:
+                st.info("No SPACs currently marked as searching.")
+            else:
+                _searching["_ipo_year"] = pd.to_datetime(
+                    _searching["ipo_date"], errors="coerce"
+                ).dt.year
+                _searching = _searching.sort_values(
+                    ["_ipo_year", "company_name"], ascending=[True, True], na_position="last"
+                )
+                st.caption(f"{len(_searching)} SPAC(s) currently searching.")
+                for _, _srow in _searching.iterrows():
+                    _sid = _srow["id"]
+                    s1, s2, s3, s4 = st.columns([5, 2, 2, 2])
+                    with s1:
+                        st.write(f"**{_srow.get('company_name', '')}**")
+                    with s2:
+                        _d = _srow.get("ipo_date")
+                        st.write(str(_d)[:10] if _d else "—")
+                    with s3:
+                        if st.button("Liquidation", key=f"srch_liq_{_sid}", use_container_width=True):
+                            _set_outcome(_sid, "liquidation")
+                    with s4:
+                        if st.button("Combination", key=f"srch_comb_{_sid}", use_container_width=True):
+                            _set_outcome(_sid, "combination")
 
     # ── Liquidations (skeleton) ───────────────────────────────────────────────
     def _outcome_view(outcome_value, heading):
