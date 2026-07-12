@@ -1190,7 +1190,15 @@ if not df.empty:
         / 1_000_000
     ).round(1)
 
-    display_cols = [c for c in ["company_name", "cik", "ipo_date", "size_m", "prospectus_url", "verified"] if c in df.columns]
+    display_cols = [c for c in ["company_name", "cik", "ipo_date", "size_m", "prospectus_url", "verified", "outcome"] if c in df.columns]
+
+    def _status_label(outcome_val):
+        o = str(outcome_val).strip().lower() if outcome_val is not None and pd.notna(outcome_val) else ""
+        if o == "liquidation":
+            return "Liquidated"
+        if o == "combination":
+            return "Combination"
+        return "Searching"
 
     _GREEN = "#788C5D"
     _IVORY = "#FAF9F5"
@@ -1207,6 +1215,7 @@ if not df.empty:
             "size_m":         float(row["size_m"]) if pd.notna(row.get("size_m")) and row.get("size_m") else None,
             "prospectus_url": row.get("prospectus_url") or "",
             "verified":       bool(row.get("verified")),
+            "status":         _status_label(row.get("outcome")),
         })
 
     _rows_json = json.dumps(_rows_data)
@@ -1215,7 +1224,7 @@ if not df.empty:
 body{{font-family:{_FONT};background:transparent;}}
 .wrap{{border-radius:8px;border:1px solid #E7E0D8;box-shadow:0 2px 8px rgba(0,0,0,.07);
        height:470px;overflow-y:auto;overflow-x:auto;}}
-table{{width:100%;border-collapse:collapse;min-width:560px;}}
+table{{width:100%;border-collapse:collapse;min-width:640px;}}
 th{{padding:11px 16px;text-align:left;font-weight:700;color:#fff;font-size:13.5px;
     white-space:nowrap;cursor:pointer;user-select:none;
     position:sticky;top:0;z-index:1;background:{_GREEN};}}
@@ -1239,6 +1248,7 @@ a{{color:{_GREEN};text-decoration:none;font-size:16px;}}
   <th data-col="cik"      data-type="num"  class="sort-none">CIK<span class="arr"></span></th>
   <th data-col="ipo_date" data-type="str"  class="sort-desc">IPO Date<span class="arr"></span></th>
   <th data-col="size_m"   data-type="num"  class="sort-none">Size ($M)<span class="arr"></span></th>
+  <th data-col="status"   data-type="str"  class="sort-none">Status<span class="arr"></span></th>
   <th data-col="none"     data-type="none" class="sort-none" style="cursor:default">Prospectus<span class="arr"></span></th>
   <th data-col="none"     data-type="none" class="sort-none" style="cursor:default">Verified<span class="arr"></span></th>
 </tr></thead>
@@ -1262,6 +1272,7 @@ function render(){{
       <td class="cik">${{r.cik}}</td>
       <td>${{r.ipo_date||"—"}}</td>
       <td class="right">${{r.size_m!==null?fmt(r.size_m):"—"}}</td>
+      <td>${{r.status}}</td>
       <td class="center">${{r.prospectus_url?`<a href="${{r.prospectus_url}}" target="_blank">📄</a>`:"—"}}</td>
       <td class="center">${{r.verified?"✅":"—"}}</td>
     </tr>`).join("");
@@ -1525,9 +1536,9 @@ if not df.empty:
 if st.session_state.is_admin:
     st.divider()
     st.subheader("Admin Panel")
-    tab_add, tab_edit, tab_verify, tab_new, tab_classify, tab_search_spacs, tab_liq, tab_comb = st.tabs(
+    tab_add, tab_edit, tab_verify, tab_new, tab_search_spacs, tab_liq, tab_comb = st.tabs(
         ["Add New Entry", "Edit / Delete", "IPO Verification", "New Filings",
-         "Classify", "Searching", "Liquidations", "Combinations"]
+         "Searching", "Liquidations", "Combinations"]
     )
 
     # ── Add ───────────────────────────────────────────────────────────────────
@@ -1830,6 +1841,7 @@ if st.session_state.is_admin:
                         "notes":                  a_notes or None,
                         "image_url":              a_image or None,
                         "filings":                initial_filings,
+                        "outcome":                "searching",  # new SPACs start in the Searching tab
                     }
                     service_client().table("ipos").insert(new_row).execute()
                     # If this came from the pending queue, remove it
@@ -2341,9 +2353,9 @@ if st.session_state.is_admin:
                         else:
                             st.warning(f"{mismatches} field(s) differ. Review above before marking as verified.")
 
-    # ── Classify (assign each SPAC an outcome) ────────────────────────────────
+    # ── Outcome helpers ───────────────────────────────────────────────────────
     # NOTE: requires an 'outcome' text column (nullable) in the ipos table.
-    # Values: null / "" / "searching" = unclassified; "liquidation"; "combination".
+    # Values: "searching" (default for new SPACs); "liquidation"; "combination".
     def _set_outcome(ipo_id, value):
         try:
             service_client().table("ipos").update({"outcome": value}).eq("id", ipo_id).execute()
@@ -2351,68 +2363,6 @@ if st.session_state.is_admin:
             st.rerun()
         except Exception as e:
             st.error(f"Could not update outcome: {e}\n\nEnsure an 'outcome' text column exists in the ipos table.")
-
-    def _is_unclassified(val):
-        # An explicit "searching" outcome is a real classification (Searching tab),
-        # not an unclassified state — only null/empty rows stay in the Classify queue.
-        return val is None or (isinstance(val, float) and pd.isna(val)) or str(val).strip() == ""
-
-    with tab_classify:
-        st.markdown("#### Classify SPAC Outcomes")
-        st.caption("SPACs awaiting classification. Choose an outcome to move each one to its tab.")
-        _cdf = load_ipos()
-        if _cdf.empty:
-            st.info("No SPAC IPOs in the database yet.")
-        else:
-            if "outcome" in _cdf.columns:
-                _unclassified = _cdf[_cdf["outcome"].apply(_is_unclassified)]
-            else:
-                _unclassified = _cdf  # column not added yet → everything is unclassified
-            _sort_order = st.radio(
-                "Sort by IPO year", ["Oldest first", "Newest first"],
-                index=0, horizontal=True, key="classify_sort",
-            )
-            # Group by IPO year (direction from the toggle), then alphabetically within each year
-            _unclassified = _unclassified.copy()
-            _unclassified["_ipo_year"] = pd.to_datetime(
-                _unclassified["ipo_date"], errors="coerce"
-            ).dt.year
-            _unclassified = _unclassified.sort_values(
-                ["_ipo_year", "company_name"],
-                ascending=[(_sort_order == "Oldest first"), True],
-                na_position="last",
-            )
-
-            _search = st.text_input("Filter by company name", key="classify_search", placeholder="Type to filter…")
-            if _search:
-                _unclassified = _unclassified[
-                    _unclassified["company_name"].str.contains(_search, case=False, na=False)
-                ]
-
-            _total = len(_unclassified)
-            st.caption(f"{_total} SPAC(s) awaiting classification.")
-
-            _LIMIT = 50
-            for _, _crow in _unclassified.head(_LIMIT).iterrows():
-                _cid = _crow["id"]
-                c1, c2, c3, c4, c5 = st.columns([4, 2, 2, 2, 2])
-                with c1:
-                    st.write(f"**{_crow.get('company_name', '')}**")
-                with c2:
-                    _d = _crow.get("ipo_date")
-                    st.write(str(_d)[:10] if _d else "—")
-                with c3:
-                    if st.button("Searching", key=f"cls_srch_{_cid}", use_container_width=True):
-                        _set_outcome(_cid, "searching")
-                with c4:
-                    if st.button("Liquidation", key=f"cls_liq_{_cid}", use_container_width=True):
-                        _set_outcome(_cid, "liquidation")
-                with c5:
-                    if st.button("Combination", key=f"cls_comb_{_cid}", use_container_width=True):
-                        _set_outcome(_cid, "combination")
-
-            if _total > _LIMIT:
-                st.caption(f"Showing first {_LIMIT} of {_total}. Use the filter above to narrow the list.")
 
     # ── Searching (holding pen until a definitive outcome) ───────────────────
     with tab_search_spacs:
@@ -2422,7 +2372,11 @@ if st.session_state.is_admin:
         if _sdf.empty or "outcome" not in _sdf.columns:
             st.info("No SPACs classified yet.")
         else:
-            _searching = _sdf[_sdf["outcome"].astype(str).str.strip().str.lower() == "searching"].copy()
+            # Null/empty outcomes are treated as searching too — the safety net for
+            # legacy rows or inserts that predate the automatic default, so no SPAC
+            # can be stranded invisibly now that the Classify tab is gone.
+            _out_norm  = _sdf["outcome"].fillna("").astype(str).str.strip().str.lower()
+            _searching = _sdf[_out_norm.isin(["searching", ""])].copy()
             if _searching.empty:
                 st.info("No SPACs currently marked as searching.")
             else:
@@ -2469,8 +2423,8 @@ if st.session_state.is_admin:
                 st.write(str(_d)[:10] if _d else "—")
             with oc3:
                 if st.button("Reset", key=f"reset_{outcome_value}_{_oid}", use_container_width=True,
-                             help="Move back to the Classify tab"):
-                    _set_outcome(_oid, None)
+                             help="Move back to the Searching tab"):
+                    _set_outcome(_oid, "searching")
 
     # Shared editor for a single liquidated SPAC (used by both Input and Saved tabs)
     def _has_liquidation_data(row):
@@ -2582,11 +2536,11 @@ if st.session_state.is_admin:
                         "'liquidation_8k_url' (text)."
                     )
         with bcol2:
-            if st.button("Reset to Classify", key=f"liq_reset_{_liq_id}",
-                         help="Move back to the Classify tab"):
+            if st.button("Move to Searching", key=f"liq_reset_{_liq_id}",
+                         help="Move back to the Searching tab"):
                 for _k in (f"liq_ext_{_liq_id}", _ltd_key, _rp_key):
                     st.session_state.pop(_k, None)
-                _set_outcome(_liq_id, None)
+                _set_outcome(_liq_id, "searching")
 
     with tab_liq:
         st.markdown("#### Liquidations")
