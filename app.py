@@ -660,6 +660,114 @@ def extract_liquidation_from_8k(url: str) -> dict:
     return result
 
 
+def find_first_combination_8k(cik: str, ipo_date: str | None) -> dict:
+    """Return the earliest 8-K with Item 2.01 (Completion of Acquisition or
+    Disposition of Assets) filed after the IPO date for a CIK-retaining SPAC.
+
+    Item 2.01 fires specifically at a business-combination closing, so the
+    FIRST such filing is the combination event — a later company rename
+    doesn't file another 2.01, so this stays correct even if the company
+    changes its name again down the line.
+    """
+    cik_int = int(cik)
+    resp = _sec_get(f"https://data.sec.gov/submissions/CIK{cik_int:010d}.json")
+    data = resp.json()
+    filings    = data.get("filings", {}).get("recent", {})
+    forms      = filings.get("form", [])
+    dates      = filings.get("filingDate", [])
+    accessions = filings.get("accessionNumber", [])
+    docs       = filings.get("primaryDocument", [])
+    items_list = filings.get("items", [])
+
+    ipo_dt = None
+    if ipo_date:
+        try:
+            ipo_dt = date.fromisoformat(str(ipo_date)[:10])
+        except ValueError:
+            ipo_dt = None
+
+    candidates = []
+    for i, form in enumerate(forms):
+        if form != "8-K":
+            continue
+        try:
+            filed_dt = date.fromisoformat(dates[i])
+        except (ValueError, IndexError):
+            continue
+        if ipo_dt and filed_dt < ipo_dt:
+            continue
+        raw_items = items_list[i] if i < len(items_list) else ""
+        item_parts = [p.strip() for p in str(raw_items).split(",")]
+        if "2.01" in item_parts:
+            accession = accessions[i].replace("-", "")
+            base = f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{accession}/{docs[i]}"
+            candidates.append((filed_dt, base))
+
+    candidates.sort(key=lambda x: x[0])  # earliest first
+    if not candidates:
+        return {"combination_8k_url": None}
+    return {"combination_8k_url": candidates[0][1], "filed_date": candidates[0][0].isoformat()}
+
+
+def extract_combination_from_8k(url: str) -> dict:
+    """Extract the combination closing date and new company name from a
+    SPAC's Item 2.01 business-combination 8-K."""
+    resp = _sec_get(url, timeout=30)
+    text = re.sub(r"<[^>]+>", " ", resp.text)
+    text = re.sub(r"https?://\S+|www\.\S+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    excerpt = text[:40000]
+
+    prompt = (
+        "Extract these fields from a SPAC business-combination closing 8-K (Item 2.01). "
+        "Return ONLY a raw JSON object:\n\n"
+        "{\n"
+        '  "combination_date": "2024-03-15",\n'
+        '  "post_combination_company_name": "NewCo Inc."\n'
+        "}\n\n"
+        "Rules:\n"
+        '- combination_date: the date the business combination/merger closed, in YYYY-MM-DD '
+        'format. Look for phrases like "consummated the business combination", "completed the merger", '
+        '"closing of the business combination occurred on". null if not found.\n'
+        '- post_combination_company_name: the new legal name of the combined company after closing. '
+        'Look for phrases like "changed its name to", "the Company was renamed", or the name used '
+        'throughout the filing to refer to the post-combination entity. This is usually NOT the same '
+        "as the SPAC's original name. null if not found.\n\n"
+        "Filing text:\n" + excerpt
+    )
+
+    msg = anthropic_client().messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=300,
+        system=[{
+            "type": "text",
+            "text": "You are a financial document parser for SEC filings. Output ONLY a raw JSON object. "
+                    "No explanation, no reasoning, no markdown — just the JSON object starting with { and ending with }.",
+            "cache_control": {"type": "ephemeral"},
+        }],
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw = msg.content[0].text.strip()
+    json_match = re.search(r'\{[^{}]*\}', raw, re.DOTALL)
+    if json_match:
+        raw = json_match.group(0)
+    elif raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw.strip())
+    try:
+        result = json.loads(raw)
+    except json.JSONDecodeError:
+        result = {}
+
+    # Normalize compact date strings (e.g. "20240315" → "2024-03-15")
+    _dv = result.get("combination_date")
+    if isinstance(_dv, str) and re.fullmatch(r'\d{8}', _dv):
+        result["combination_date"] = f"{_dv[:4]}-{_dv[4:6]}-{_dv[6:]}"
+
+    return result
+
+
 def _extract_registered_securities(raw_html: str) -> str:
     """Extract the Section 12(b) registered securities block from a 10-K.
     Tries HTML table parsing first; falls back to stripped-text extraction.
@@ -2402,32 +2510,6 @@ if st.session_state.is_admin:
                         if st.button("Combination", key=f"srch_comb_{_sid}", use_container_width=True):
                             _set_outcome(_sid, "combination")
 
-    # ── Liquidations (skeleton) ───────────────────────────────────────────────
-    def _outcome_view(outcome_value, heading):
-        _odf = load_ipos()
-        if _odf.empty or "outcome" not in _odf.columns:
-            st.info("No SPACs classified yet.")
-            return
-        _sel = _odf[_odf["outcome"].astype(str).str.strip().str.lower() == outcome_value].sort_values(
-            "ipo_date", ascending=False, na_position="last"
-        )
-        if _sel.empty:
-            st.info(f"No SPACs classified as {heading.lower()} yet.")
-            return
-        st.caption(f"{len(_sel)} SPAC(s) classified as {heading.lower()}.")
-        for _, _orow in _sel.iterrows():
-            _oid = _orow["id"]
-            oc1, oc2, oc3 = st.columns([6, 2, 2])
-            with oc1:
-                st.write(f"**{_orow.get('company_name', '')}**  ·  CIK {_orow.get('cik', '')}")
-            with oc2:
-                _d = _orow.get("ipo_date")
-                st.write(str(_d)[:10] if _d else "—")
-            with oc3:
-                if st.button("Reset", key=f"reset_{outcome_value}_{_oid}", use_container_width=True,
-                             help="Move back to the Searching tab"):
-                    _set_outcome(_oid, "searching")
-
     # Shared editor for a single liquidated SPAC (used by both Input and Saved tabs)
     def _has_liquidation_data(row):
         _a = row.get("liquidation_last_trading_date")
@@ -2609,10 +2691,186 @@ if st.session_state.is_admin:
                             _se_row   = _saved[_saved["id"] == _se_opts[_se_label]].iloc[0]
                             _render_liquidation_editor(_se_row)
 
+    # Shared editor for a single combined SPAC (used by both Input and Saved tabs).
+    # Covers only CIK-retaining combinations for now — the SPAC's own CIK keeps
+    # filing post-close, so its Item 2.01 8-K is directly discoverable. Combinations
+    # where the target took on a new CIK aren't covered by this scrape.
+    def _has_combination_data(row):
+        _a = row.get("combination_date")
+        _b = row.get("post_combination_company_name")
+        _a_set = _a not in (None, "") and pd.notna(_a)
+        _b_set = _b not in (None, "") and pd.notna(_b) and str(_b).strip() != ""
+        return bool(_a_set or _b_set)
+
+    def _render_combination_editor(crow):
+        _comb_id = crow["id"]
+        _cik     = crow.get("cik")
+
+        if _cik:
+            _edgar_url = (
+                "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany"
+                f"&CIK={_cik}&type=8-K&dateb=&owner=include&count=40"
+            )
+            st.markdown(f"🔗 [View EDGAR 8-K filings for {crow.get('company_name','')}]({_edgar_url})")
+        else:
+            st.warning("No CIK on record for this SPAC — cannot build an EDGAR link or scrape filings.")
+
+        _cd_key = f"comb_cd_{_comb_id}"
+        _nm_key = f"comb_nm_{_comb_id}"
+
+        # Scrape the earliest Item 2.01 8-K after the IPO date
+        if st.button("Find & scrape combination 8-K", key=f"comb_scrape_{_comb_id}", type="primary"):
+            if not _cik:
+                st.error("No CIK available for this SPAC.")
+            else:
+                with st.spinner("Finding the business-combination 8-K and extracting… "
+                                 "(SEC may take up to 3 min if rate-limited)"):
+                    try:
+                        _info = find_first_combination_8k(str(_cik), crow.get("ipo_date"))
+                        _url  = _info.get("combination_8k_url")
+                        if not _url:
+                            st.error("No Item 2.01 (business combination) 8-K found for this SPAC on EDGAR. "
+                                      "This CIK may have changed at combination — not yet supported by this scrape.")
+                        else:
+                            _ext = extract_combination_from_8k(_url)
+                            _ext["url"] = _url
+                            st.session_state[f"comb_ext_{_comb_id}"] = _ext
+                            # Seed the editable widgets with the scraped values
+                            if _ext.get("combination_date"):
+                                try:
+                                    st.session_state[_cd_key] = pd.to_datetime(_ext["combination_date"]).date()
+                                except Exception:
+                                    pass
+                            if _ext.get("post_combination_company_name"):
+                                st.session_state[_nm_key] = _ext["post_combination_company_name"]
+                            st.rerun()
+                    except RuntimeError as _re:
+                        st.error(f"SEC EDGAR is rate-limiting requests. Please wait a minute and try again.\n\n{_re}")
+                    except Exception as _e:
+                        st.error(f"Could not scrape: {_e}")
+
+        _scraped = st.session_state.get(f"comb_ext_{_comb_id}", {})
+        if _scraped.get("url"):
+            st.caption(f"Scraped from: {_scraped['url']}")
+
+        # Initialise widget state from stored DB values on first view
+        if _cd_key not in st.session_state:
+            _db_cd = crow.get("combination_date")
+            _init_date = None
+            if _db_cd not in (None, "") and pd.notna(_db_cd):
+                try:
+                    _init_date = pd.to_datetime(str(_db_cd)).date()
+                except Exception:
+                    _init_date = None
+            st.session_state[_cd_key] = _init_date
+        if _nm_key not in st.session_state:
+            _db_nm = crow.get("post_combination_company_name")
+            st.session_state[_nm_key] = str(_db_nm) if _db_nm not in (None, "") and pd.notna(_db_nm) else ""
+
+        fc1, fc2 = st.columns(2)
+        with fc1:
+            _cd_val = st.date_input(
+                "Combination date", min_value=date(2000, 1, 1), max_value=date(2035, 12, 31),
+                key=_cd_key, format="YYYY-MM-DD",
+            )
+        with fc2:
+            _nm_val = st.text_input("Post-combination company name", key=_nm_key)
+
+        bcol1, bcol2 = st.columns(2)
+        with bcol1:
+            if st.button("Save combination data", key=f"comb_save_{_comb_id}", type="primary"):
+                try:
+                    _patch = {
+                        "combination_date":               _cd_val.isoformat() if _cd_val else None,
+                        "post_combination_company_name":  _nm_val.strip() or None,
+                    }
+                    if _scraped.get("url"):
+                        _patch["combination_8k_url"] = _scraped["url"]
+                    service_client().table("ipos").update(_patch).eq("id", _comb_id).execute()
+                    for _k in (f"comb_ext_{_comb_id}", _cd_key, _nm_key):
+                        st.session_state.pop(_k, None)
+                    st.success("Saved.")
+                    refresh()
+                    st.rerun()
+                except Exception as _e:
+                    st.error(
+                        f"Could not save: {_e}\n\nEnsure the ipos table has columns "
+                        "'combination_date' (date), "
+                        "'post_combination_company_name' (text), and "
+                        "'combination_8k_url' (text)."
+                    )
+        with bcol2:
+            if st.button("Move to Searching", key=f"comb_reset_{_comb_id}",
+                         help="Move back to the Searching tab"):
+                for _k in (f"comb_ext_{_comb_id}", _cd_key, _nm_key):
+                    st.session_state.pop(_k, None)
+                _set_outcome(_comb_id, "searching")
+
     with tab_comb:
         st.markdown("#### Combinations")
-        st.caption("Detailed combination data and scrapes will be added here. Skeleton for now.")
-        _outcome_view("combination", "Combinations")
+        st.caption("Currently covers CIK-retaining combinations only — where the SPAC's own CIK "
+                   "continued filing after closing. Combinations where the target took on a new "
+                   "CIK aren't scraped here yet.")
+        _cdf2 = load_ipos()
+        if _cdf2.empty or "outcome" not in _cdf2.columns:
+            st.info("No SPACs classified yet.")
+        else:
+            _comb = _cdf2[_cdf2["outcome"].astype(str).str.strip().str.lower() == "combination"].sort_values(
+                "ipo_date", ascending=False, na_position="last"
+            )
+            if _comb.empty:
+                st.info("No SPACs classified as combination yet.")
+            else:
+                _has_cols = ("combination_date" in _comb.columns
+                             or "post_combination_company_name" in _comb.columns)
+                if _has_cols:
+                    _saved_mask = _comb.apply(_has_combination_data, axis=1)
+                else:
+                    _saved_mask = pd.Series(False, index=_comb.index)
+                _pending = _comb[~_saved_mask]
+                _saved   = _comb[_saved_mask]
+
+                _sub_input, _sub_table = st.tabs(
+                    [f"Input ({len(_pending)})", f"Saved Combinations ({len(_saved)})"]
+                )
+
+                # ── Input: combinations still awaiting data ──────────────────
+                with _sub_input:
+                    st.caption("Select a combined SPAC, then scrape its Item 2.01 8-K for the "
+                               "combination date and post-combination company name. "
+                               "Saved entries move to the table tab.")
+                    if _pending.empty:
+                        st.info("No combinations awaiting data entry.")
+                    else:
+                        _pe_opts  = {f"{r['company_name']}  (ID {r['id']})": r["id"] for _, r in _pending.iterrows()}
+                        _pe_label = st.selectbox("Select a combined SPAC", list(_pe_opts.keys()), key="comb_input_select")
+                        _pe_row   = _pending[_pending["id"] == _pe_opts[_pe_label]].iloc[0]
+                        _render_combination_editor(_pe_row)
+
+                # ── Saved Combinations: completed records ────────────────────
+                with _sub_table:
+                    if _saved.empty:
+                        st.info("No saved combinations yet.")
+                    else:
+                        def _ccol(name):
+                            return _saved[name].values if name in _saved.columns else [None] * len(_saved)
+                        _disp = pd.DataFrame({
+                            "SPAC Name (at IPO)":        _saved["company_name"].values,
+                            "Post-Combination Name":     _ccol("post_combination_company_name"),
+                            "CIK":                       _saved["cik"].values,
+                            "IPO Date":                  _saved["ipo_date"].astype(str).str[:10].values,
+                            "Combination Date":          _ccol("combination_date"),
+                            "8-K":                       _ccol("combination_8k_url"),
+                        })
+                        st.dataframe(
+                            _disp, hide_index=True, use_container_width=True,
+                            column_config={"8-K": st.column_config.LinkColumn("8-K", display_text="View")},
+                        )
+                        with st.expander("Edit a saved combination"):
+                            _se_opts  = {f"{r['company_name']}  (ID {r['id']})": r["id"] for _, r in _saved.iterrows()}
+                            _se_label = st.selectbox("Select entry to edit", list(_se_opts.keys()), key="comb_saved_select")
+                            _se_row   = _saved[_saved["id"] == _se_opts[_se_label]].iloc[0]
+                            _render_combination_editor(_se_row)
 
 # ── SPAC Audit Partners ────────────────────────────────────────────────────────
 
