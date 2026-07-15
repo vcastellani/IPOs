@@ -2408,7 +2408,9 @@ if st.session_state.is_admin:
         if _odf.empty or "outcome" not in _odf.columns:
             st.info("No SPACs classified yet.")
             return
-        _sel = _odf[_odf["outcome"].astype(str).str.strip().str.lower() == outcome_value].sort_values("company_name")
+        _sel = _odf[_odf["outcome"].astype(str).str.strip().str.lower() == outcome_value].sort_values(
+            "ipo_date", ascending=False, na_position="last"
+        )
         if _sel.empty:
             st.info(f"No SPACs classified as {heading.lower()} yet.")
             return
