@@ -2653,11 +2653,133 @@ if st.session_state.is_admin:
 
                 # ── Input: liquidations still awaiting data ──────────────────
                 with _sub_input:
-                    st.caption("Select a liquidated SPAC, then scrape its final 8-K for the last "
-                               "trading date and redemption price. Saved entries move to the table tab.")
                     if _pending.empty:
                         st.info("No liquidations awaiting data entry.")
                     else:
+                        # ── Batch auto-scrape ────────────────────────────────
+                        st.markdown("##### Batch scrape")
+                        st.caption(
+                            f"Scrape the final 8-K for all {len(_pending)} pending liquidation(s) at once, "
+                            "then review and edit the results below before saving. Makes one SEC lookup and "
+                            "one Claude call per SPAC, so it may take a minute for a large batch."
+                        )
+                        _bc1, _bc2 = st.columns([2, 2])
+                        with _bc1:
+                            _run_batch = st.button(
+                                f"🔍 Scrape all {len(_pending)} pending", key="liq_batch_scrape", type="primary"
+                            )
+                        with _bc2:
+                            if st.session_state.get("liq_batch_results") and st.button(
+                                "Clear results", key="liq_batch_clear"
+                            ):
+                                st.session_state.pop("liq_batch_results", None)
+                                st.rerun()
+
+                        if _run_batch:
+                            _results = []
+                            _rows = list(_pending.iterrows())
+                            _prog = st.progress(0.0, text="Starting…")
+                            for _i, (_, _r) in enumerate(_rows):
+                                _name = _r.get("company_name", "") or ""
+                                _cik  = _r.get("cik")
+                                _prog.progress(_i / len(_rows), text=f"Scraping {_name} ({_i + 1}/{len(_rows)})…")
+                                _entry = {"id": int(_r["id"]), "company": _name, "cik": _cik,
+                                          "last_trading_date": None, "redemption_price": None,
+                                          "url": None, "error": None}
+                                if not _cik:
+                                    _entry["error"] = "No CIK on record"
+                                else:
+                                    try:
+                                        _info = find_last_8k(str(_cik))
+                                        _url  = _info.get("latest_8k_url")
+                                        if not _url:
+                                            _entry["error"] = "No 8-K found on EDGAR"
+                                        else:
+                                            _ext = extract_liquidation_from_8k(_url)
+                                            _entry["url"] = _url
+                                            _entry["last_trading_date"] = _ext.get("last_trading_date")
+                                            _entry["redemption_price"]  = _ext.get("redemption_price")
+                                    except Exception as _e:
+                                        _entry["error"] = str(_e)[:200]
+                                _results.append(_entry)
+                                time.sleep(0.2)  # be polite to SEC between SPACs
+                            _prog.progress(1.0, text="Done.")
+                            st.session_state["liq_batch_results"] = _results
+                            st.rerun()
+
+                        # ── Review + save the batch ──────────────────────────
+                        _batch = st.session_state.get("liq_batch_results")
+                        if _batch:
+                            _ok   = [b for b in _batch if not b["error"]]
+                            _errs = [b for b in _batch if b["error"]]
+                            if _errs:
+                                st.warning(
+                                    f"{len(_errs)} SPAC(s) couldn't be scraped automatically — handle these "
+                                    "individually below:\n\n"
+                                    + "\n".join(f"• {b['company']} — {b['error']}" for b in _errs)
+                                )
+                            if _ok:
+                                st.markdown("##### Review scraped results")
+                                st.caption("Edit any value, uncheck Save to skip a row, then click Save. "
+                                           "Blank cells mean nothing was found — fill them in or skip.")
+                                _edit_df = pd.DataFrame([{
+                                    "Save": True,
+                                    "Company": b["company"],
+                                    "Last Trading Date": (
+                                        pd.to_datetime(b["last_trading_date"]).date()
+                                        if b["last_trading_date"] else None
+                                    ),
+                                    "Redemption Price": (
+                                        float(b["redemption_price"]) if b["redemption_price"] is not None else None
+                                    ),
+                                    "8-K": b["url"] or "",
+                                } for b in _ok])
+                                _edited = st.data_editor(
+                                    _edit_df, hide_index=True, use_container_width=True, num_rows="fixed",
+                                    key="liq_batch_editor",
+                                    column_config={
+                                        "Save": st.column_config.CheckboxColumn("Save?", help="Uncheck to skip"),
+                                        "Company": st.column_config.TextColumn("Company", disabled=True),
+                                        "Last Trading Date": st.column_config.DateColumn(
+                                            "Last Trading Date", format="YYYY-MM-DD"),
+                                        "Redemption Price": st.column_config.NumberColumn(
+                                            "Redemption Price", format="%.4f", step=0.01),
+                                        "8-K": st.column_config.LinkColumn("8-K", display_text="View", disabled=True),
+                                    },
+                                )
+                                if st.button("💾 Save all checked rows", key="liq_batch_save", type="primary"):
+                                    _n, _fails = 0, []
+                                    for _idx, _er in _edited.iterrows():
+                                        if not _er["Save"]:
+                                            continue
+                                        _ltd = _er["Last Trading Date"]
+                                        _rp  = _er["Redemption Price"]
+                                        _patch = {
+                                            "liquidation_last_trading_date": (
+                                                pd.to_datetime(_ltd).date().isoformat() if pd.notna(_ltd) else None),
+                                            "liquidation_redemption_price": (
+                                                float(_rp) if pd.notna(_rp) else None),
+                                            "liquidation_8k_url": _ok[_idx]["url"] or None,
+                                        }
+                                        try:
+                                            service_client().table("ipos").update(_patch).eq(
+                                                "id", _ok[_idx]["id"]).execute()
+                                            _n += 1
+                                        except Exception as _e:
+                                            _fails.append(f"{_ok[_idx]['company']}: {_e}")
+                                    st.session_state.pop("liq_batch_results", None)
+                                    if _fails:
+                                        st.error(
+                                            "Some saves failed (ensure the liquidation_* columns exist):\n"
+                                            + "\n".join(_fails)
+                                        )
+                                    else:
+                                        st.success(f"Saved {_n} liquidation(s).")
+                                        refresh()
+                                        st.rerun()
+
+                        st.divider()
+                        st.markdown("##### Or scrape one at a time")
                         _pe_opts  = {f"{r['company_name']}  (ID {r['id']})": r["id"] for _, r in _pending.iterrows()}
                         _pe_label = st.selectbox("Select a liquidated SPAC", list(_pe_opts.keys()), key="liq_input_select")
                         _pe_row   = _pending[_pending["id"] == _pe_opts[_pe_label]].iloc[0]
