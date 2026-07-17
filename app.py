@@ -2656,17 +2656,20 @@ if st.session_state.is_admin:
                     if _pending.empty:
                         st.info("No liquidations awaiting data entry.")
                     else:
-                        # ── Batch auto-scrape ────────────────────────────────
+                        # ── Batch auto-scrape (chunked to keep runs fast + reliable) ──
+                        _BATCH_SIZE   = 25
+                        _batch_pending = _pending.head(_BATCH_SIZE)
+                        _remaining     = len(_pending) - len(_batch_pending)
                         st.markdown("##### Batch scrape")
                         st.caption(
-                            f"Scrape the final 8-K for all {len(_pending)} pending liquidation(s) at once, "
-                            "then review and edit the results below before saving. Makes one SEC lookup and "
-                            "one Claude call per SPAC, so it may take a minute for a large batch."
+                            f"Scrapes the next {len(_batch_pending)} of {len(_pending)} pending liquidation(s) "
+                            "(up to 25 at a time), then review and edit the results below before saving. "
+                            "Save this batch and the next 25 become available."
                         )
                         _bc1, _bc2 = st.columns([2, 2])
                         with _bc1:
                             _run_batch = st.button(
-                                f"🔍 Scrape all {len(_pending)} pending", key="liq_batch_scrape", type="primary"
+                                f"🔍 Scrape next {len(_batch_pending)}", key="liq_batch_scrape", type="primary"
                             )
                         with _bc2:
                             if st.session_state.get("liq_batch_results") and st.button(
@@ -2674,10 +2677,12 @@ if st.session_state.is_admin:
                             ):
                                 st.session_state.pop("liq_batch_results", None)
                                 st.rerun()
+                        if _remaining > 0:
+                            st.caption(f"{_remaining} more will remain after this batch.")
 
                         if _run_batch:
                             _results = []
-                            _rows = list(_pending.iterrows())
+                            _rows = list(_batch_pending.iterrows())
                             _prog = st.progress(0.0, text="Starting…")
                             for _i, (_, _r) in enumerate(_rows):
                                 _name = _r.get("company_name", "") or ""
