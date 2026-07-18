@@ -2656,20 +2656,27 @@ if st.session_state.is_admin:
                     if _pending.empty:
                         st.info("No liquidations awaiting data entry.")
                     else:
-                        # ── Batch auto-scrape (chunked to keep runs fast + reliable) ──
-                        _BATCH_SIZE   = 25
-                        _batch_pending = _pending.head(_BATCH_SIZE)
-                        _remaining     = len(_pending) - len(_batch_pending)
+                        # ── Batch auto-scrape (chunked; skips SPACs already tried this session) ──
+                        _BATCH_SIZE = 25
+                        _attempted  = st.session_state.setdefault("liq_attempted", set())
+                        # Only consider pending SPACs not already tried this session, so failed
+                        # scrapes (no 8-K, no data) don't re-clog the top of the queue every run.
+                        _fresh_pending = _pending[~_pending["id"].isin(_attempted)]
+                        _batch_pending = _fresh_pending.head(_BATCH_SIZE)
+                        _tried_count   = len(_pending) - len(_fresh_pending)
+
                         st.markdown("##### Batch scrape")
                         st.caption(
-                            f"Scrapes the next {len(_batch_pending)} of {len(_pending)} pending liquidation(s) "
-                            "(up to 25 at a time), then review and edit the results below before saving. "
-                            "Save this batch and the next 25 become available."
+                            f"{len(_pending)} pending · {_tried_count} tried this session · "
+                            f"{len(_fresh_pending)} left to try. Scrapes up to 25 untried SPACs per run, so "
+                            "scrapes that fail don't block the queue. Review and save the results below; "
+                            "anything that couldn't be scraped stays pending for manual entry."
                         )
-                        _bc1, _bc2 = st.columns([2, 2])
+                        _bc1, _bc2, _bc3 = st.columns([2, 2, 2])
                         with _bc1:
                             _run_batch = st.button(
-                                f"🔍 Scrape next {len(_batch_pending)}", key="liq_batch_scrape", type="primary"
+                                f"🔍 Scrape next {len(_batch_pending)}", key="liq_batch_scrape",
+                                type="primary", disabled=_batch_pending.empty,
                             )
                         with _bc2:
                             if st.session_state.get("liq_batch_results") and st.button(
@@ -2677,8 +2684,20 @@ if st.session_state.is_admin:
                             ):
                                 st.session_state.pop("liq_batch_results", None)
                                 st.rerun()
-                        if _remaining > 0:
-                            st.caption(f"{_remaining} more will remain after this batch.")
+                        with _bc3:
+                            if _attempted and st.button(
+                                "↻ Retry tried", key="liq_batch_retry",
+                                help="Clear the session skip-list and scrape from the top again"
+                            ):
+                                st.session_state["liq_attempted"] = set()
+                                st.rerun()
+
+                        if _batch_pending.empty and _tried_count > 0:
+                            st.info(
+                                "All pending liquidations have been tried this session. The ones still showing "
+                                "as pending couldn't be auto-scraped — enter them manually below, or click "
+                                "“Retry tried” to run through them again."
+                            )
 
                         if _run_batch:
                             _results = []
@@ -2707,8 +2726,10 @@ if st.session_state.is_admin:
                                     except Exception as _e:
                                         _entry["error"] = str(_e)[:200]
                                 _results.append(_entry)
+                                _attempted.add(_entry["id"])  # mark tried so the next run advances
                                 time.sleep(0.2)  # be polite to SEC between SPACs
                             _prog.progress(1.0, text="Done.")
+                            st.session_state["liq_attempted"]     = _attempted
                             st.session_state["liq_batch_results"] = _results
                             st.rerun()
 
