@@ -1303,10 +1303,10 @@ if not df.empty:
     def _status_label(outcome_val):
         o = str(outcome_val).strip().lower() if outcome_val is not None and pd.notna(outcome_val) else ""
         if o == "liquidation":
-            return "Liquidated"
+            return "Liquidated ⛔"
         if o == "combination":
-            return "Combination"
-        return "Searching"
+            return "Combination ✅"
+        return "Searching 🔍"
 
     _GREEN = "#788C5D"
     _IVORY = "#FAF9F5"
@@ -2656,22 +2656,36 @@ if st.session_state.is_admin:
                     if _pending.empty:
                         st.info("No liquidations awaiting data entry.")
                     else:
-                        # ── Batch auto-scrape (chunked; skips SPACs already tried this session) ──
+                        # ── Batch auto-scrape (chunked; durably skips SPACs already tried) ──
+                        # Un-scrapeable SPACs (no 8-K / no extractable data) are marked in a
+                        # persistent 'liquidation_scrape_attempted' column so they're skipped
+                        # across sessions — the batch advances through all 400 without ever
+                        # re-spending tokens on the same failures. Falls back to a session-only
+                        # skip-set if that column hasn't been added to the ipos table yet.
                         _BATCH_SIZE = 25
-                        _attempted  = st.session_state.setdefault("liq_attempted", set())
-                        # Only consider pending SPACs not already tried this session, so failed
-                        # scrapes (no 8-K, no data) don't re-clog the top of the queue every run.
-                        _fresh_pending = _pending[~_pending["id"].isin(_attempted)]
+                        _ATT_COL    = "liquidation_scrape_attempted"
+                        _has_att    = _ATT_COL in _pending.columns
+                        if _has_att:
+                            _att_mask = _pending[_ATT_COL].fillna(False).astype(bool)
+                        else:
+                            _sess_att = st.session_state.setdefault("liq_attempted", set())
+                            _att_mask = _pending["id"].isin(_sess_att)
+                        _fresh_pending = _pending[~_att_mask]
                         _batch_pending = _fresh_pending.head(_BATCH_SIZE)
-                        _tried_count   = len(_pending) - len(_fresh_pending)
+                        _tried_count   = int(_att_mask.sum())
+                        _scope         = "" if _has_att else " this session"
 
                         st.markdown("##### Batch scrape")
                         st.caption(
-                            f"{len(_pending)} pending · {_tried_count} tried this session · "
-                            f"{len(_fresh_pending)} left to try. Scrapes up to 25 untried SPACs per run, so "
-                            "scrapes that fail don't block the queue. Review and save the results below; "
-                            "anything that couldn't be scraped stays pending for manual entry."
+                            f"{len(_pending)} pending · {_tried_count} already tried{_scope} · "
+                            f"{len(_fresh_pending)} left to try. Scrapes up to 25 untried SPACs per run; "
+                            "un-scrapeable SPACs are remembered so the batch keeps advancing without "
+                            "re-spending tokens on the same failures. Review and save the results below."
                         )
+                        if not _has_att:
+                            st.caption("⚠️ Tracking is session-only until the "
+                                       "`liquidation_scrape_attempted` (boolean) column is added to the "
+                                       "ipos table — add it so progress persists across sessions.")
                         _bc1, _bc2, _bc3 = st.columns([2, 2, 2])
                         with _bc1:
                             _run_batch = st.button(
@@ -2685,18 +2699,25 @@ if st.session_state.is_admin:
                                 st.session_state.pop("liq_batch_results", None)
                                 st.rerun()
                         with _bc3:
-                            if _attempted and st.button(
+                            if _tried_count > 0 and st.button(
                                 "↻ Retry tried", key="liq_batch_retry",
-                                help="Clear the session skip-list and scrape from the top again"
+                                help="Clear the skip-list and scrape the un-scrapeable ones again"
                             ):
+                                if _has_att:
+                                    try:
+                                        service_client().table("ipos").update(
+                                            {_ATT_COL: False}).eq("outcome", "liquidation").execute()
+                                    except Exception:
+                                        pass
                                 st.session_state["liq_attempted"] = set()
+                                refresh()
                                 st.rerun()
 
                         if _batch_pending.empty and _tried_count > 0:
                             st.info(
-                                "All pending liquidations have been tried this session. The ones still showing "
-                                "as pending couldn't be auto-scraped — enter them manually below, or click "
-                                "“Retry tried” to run through them again."
+                                "Every pending liquidation has been tried. The ones still showing as pending "
+                                "couldn't be auto-scraped — enter them manually below, or click “Retry tried” "
+                                "to run through them again."
                             )
 
                         if _run_batch:
@@ -2726,11 +2747,28 @@ if st.session_state.is_admin:
                                     except Exception as _e:
                                         _entry["error"] = str(_e)[:200]
                                 _results.append(_entry)
-                                _attempted.add(_entry["id"])  # mark tried so the next run advances
                                 time.sleep(0.2)  # be polite to SEC between SPACs
                             _prog.progress(1.0, text="Done.")
-                            st.session_state["liq_attempted"]     = _attempted
+
+                            # Durably mark SPACs that yielded no saveable data, so they're never
+                            # re-scraped. SPACs that DID return data are left unmarked so they
+                            # stay available for review/save.
+                            _to_mark = [e["id"] for e in _results
+                                        if e["error"] or (not e["last_trading_date"] and e["redemption_price"] is None)]
+                            if _to_mark:
+                                _marked = False
+                                if _has_att:
+                                    try:
+                                        service_client().table("ipos").update(
+                                            {_ATT_COL: True}).in_("id", _to_mark).execute()
+                                        _marked = True
+                                    except Exception:
+                                        _marked = False
+                                if not _marked:
+                                    st.session_state.setdefault("liq_attempted", set()).update(_to_mark)
+
                             st.session_state["liq_batch_results"] = _results
+                            refresh()
                             st.rerun()
 
                         # ── Review + save the batch ──────────────────────────
