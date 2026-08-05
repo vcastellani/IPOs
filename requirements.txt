@@ -6,3 +6,7 @@ streamlit==1.58.0
 supabase==2.31.0
 pandas==3.0.3
 anthropic==0.115.1
+# Pin Starlette below 1.4.0: streamlit 1.58.0's gzip middleware subclasses
+# starlette's GZipResponder, and 1.4.0 added a required 'thread_minimum_size'
+# arg that breaks it (every request 500s). 1.3.1 is the last compatible release.
+starlette==1.3.1
