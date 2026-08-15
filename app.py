@@ -1268,11 +1268,6 @@ with st.sidebar:
         "IPO data updated August 2026</p>",
         unsafe_allow_html=True,
     )
-        st.markdown(
-        "<p style='color:#B0ABA1;font-size:11px;margin-top:24px;'>"
-        "Liquidation data updated August 2026</p>",
-        unsafe_allow_html=True,
-    )
     
     
 
