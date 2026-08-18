@@ -2901,8 +2901,10 @@ if st.session_state.is_admin:
         else:
             st.warning("No CIK on record for this SPAC — cannot build an EDGAR link or scrape filings.")
 
-        _cd_key = f"comb_cd_{_comb_id}"
-        _nm_key = f"comb_nm_{_comb_id}"
+        _cd_key  = f"comb_cd_{_comb_id}"
+        _nm_key  = f"comb_nm_{_comb_id}"
+        _k8_key  = f"comb_8k_{_comb_id}"
+        _src_key = f"comb_src_{_comb_id}"
 
         # Scrape the earliest Item 2.01 8-K after the IPO date
         if st.button("Find & scrape combination 8-K", key=f"comb_scrape_{_comb_id}", type="primary"):
@@ -2929,6 +2931,7 @@ if st.session_state.is_admin:
                                     pass
                             if _ext.get("post_combination_company_name"):
                                 st.session_state[_nm_key] = _ext["post_combination_company_name"]
+                            st.session_state[_k8_key] = _url  # seed the editable 8-K URL field
                             st.rerun()
                     except RuntimeError as _re:
                         st.error(f"SEC EDGAR is rate-limiting requests. Please wait a minute and try again.\n\n{_re}")
@@ -2952,6 +2955,12 @@ if st.session_state.is_admin:
         if _nm_key not in st.session_state:
             _db_nm = crow.get("post_combination_company_name")
             st.session_state[_nm_key] = str(_db_nm) if _db_nm not in (None, "") and pd.notna(_db_nm) else ""
+        if _k8_key not in st.session_state:
+            _db8 = crow.get("combination_8k_url")
+            st.session_state[_k8_key] = str(_db8) if _db8 not in (None, "") and pd.notna(_db8) else ""
+        if _src_key not in st.session_state:
+            _dbsrc = crow.get("combination_source_url")
+            st.session_state[_src_key] = str(_dbsrc) if _dbsrc not in (None, "") and pd.notna(_dbsrc) else ""
 
         fc1, fc2 = st.columns(2)
         with fc1:
@@ -2962,6 +2971,12 @@ if st.session_state.is_admin:
         with fc2:
             _nm_val = st.text_input("Post-combination company name", key=_nm_key)
 
+        _k8_val  = st.text_input("8-K URL (edit if the detected filing is wrong)", key=_k8_key)
+        _src_val = st.text_input(
+            "Source URL (what you used to confirm)", key=_src_key,
+            placeholder="Optional — e.g. press release, proxy filing, or news article",
+        )
+
         bcol1, bcol2 = st.columns(2)
         with bcol1:
             if st.button("Save combination data", key=f"comb_save_{_comb_id}", type="primary"):
@@ -2969,11 +2984,11 @@ if st.session_state.is_admin:
                     _patch = {
                         "combination_date":               _cd_val.isoformat() if _cd_val else None,
                         "post_combination_company_name":  _nm_val.strip() or None,
+                        "combination_8k_url":             _k8_val.strip() or None,
+                        "combination_source_url":         _src_val.strip() or None,
                     }
-                    if _scraped.get("url"):
-                        _patch["combination_8k_url"] = _scraped["url"]
                     service_client().table("ipos").update(_patch).eq("id", _comb_id).execute()
-                    for _k in (f"comb_ext_{_comb_id}", _cd_key, _nm_key):
+                    for _k in (f"comb_ext_{_comb_id}", _cd_key, _nm_key, _k8_key, _src_key):
                         st.session_state.pop(_k, None)
                     st.success("Saved.")
                     refresh()
@@ -2982,13 +2997,14 @@ if st.session_state.is_admin:
                     st.error(
                         f"Could not save: {_e}\n\nEnsure the ipos table has columns "
                         "'combination_date' (date), "
-                        "'post_combination_company_name' (text), and "
-                        "'combination_8k_url' (text)."
+                        "'post_combination_company_name' (text), "
+                        "'combination_8k_url' (text), and "
+                        "'combination_source_url' (text)."
                     )
         with bcol2:
             if st.button("Move to Searching", key=f"comb_reset_{_comb_id}",
                          help="Move back to the Searching tab"):
-                for _k in (f"comb_ext_{_comb_id}", _cd_key, _nm_key):
+                for _k in (f"comb_ext_{_comb_id}", _cd_key, _nm_key, _k8_key, _src_key):
                     st.session_state.pop(_k, None)
                 _set_outcome(_comb_id, "searching")
 
@@ -3153,6 +3169,8 @@ if st.session_state.is_admin:
                                 st.markdown("##### Review scraped results")
                                 st.caption("Edit any value, uncheck Save to skip a row, then click Save. "
                                            "Blank cells mean nothing was found — fill them in or skip.")
+                                st.caption("The 8-K URL is editable — fix it if the detected filing is wrong. "
+                                           "Use Source URL to record what you used to confirm.")
                                 _ceditdf = pd.DataFrame([{
                                     "Save": True,
                                     "Company": b["company"],
@@ -3161,7 +3179,8 @@ if st.session_state.is_admin:
                                         if b["combination_date"] else None
                                     ),
                                     "Post-Combination Name": b["post_combination_company_name"] or "",
-                                    "8-K": b["url"] or "",
+                                    "8-K URL": b["url"] or "",
+                                    "Source URL": "",
                                 } for b in _cok])
                                 _cedited = st.data_editor(
                                     _ceditdf, hide_index=True, use_container_width=True, num_rows="fixed",
@@ -3172,7 +3191,10 @@ if st.session_state.is_admin:
                                         "Combination Date": st.column_config.DateColumn(
                                             "Combination Date", format="YYYY-MM-DD"),
                                         "Post-Combination Name": st.column_config.TextColumn("Post-Combination Name"),
-                                        "8-K": st.column_config.LinkColumn("8-K", display_text="View", disabled=True),
+                                        "8-K URL": st.column_config.LinkColumn(
+                                            "8-K URL", help="Edit if the detected filing is wrong"),
+                                        "Source URL": st.column_config.LinkColumn(
+                                            "Source URL", help="What you used to confirm (optional)"),
                                     },
                                 )
                                 if st.button("💾 Save all checked rows", key="comb_batch_save", type="primary"):
@@ -3182,11 +3204,14 @@ if st.session_state.is_admin:
                                             continue
                                         _ccd = _cerow["Combination Date"]
                                         _cnm = _cerow["Post-Combination Name"]
+                                        _c8k = _cerow["8-K URL"]
+                                        _csrc = _cerow["Source URL"]
                                         _cpatch = {
                                             "combination_date": (
                                                 pd.to_datetime(_ccd).date().isoformat() if pd.notna(_ccd) else None),
                                             "post_combination_company_name": (str(_cnm).strip() or None),
-                                            "combination_8k_url": _cok[_cidx]["url"] or None,
+                                            "combination_8k_url": (str(_c8k).strip() if pd.notna(_c8k) and str(_c8k).strip() else None),
+                                            "combination_source_url": (str(_csrc).strip() if pd.notna(_csrc) and str(_csrc).strip() else None),
                                         }
                                         try:
                                             service_client().table("ipos").update(_cpatch).eq(
@@ -3226,10 +3251,14 @@ if st.session_state.is_admin:
                             "IPO Date":                  _saved["ipo_date"].astype(str).str[:10].values,
                             "Combination Date":          _ccol("combination_date"),
                             "8-K":                       _ccol("combination_8k_url"),
+                            "Source":                    _ccol("combination_source_url"),
                         })
                         st.dataframe(
                             _disp, hide_index=True, use_container_width=True,
-                            column_config={"8-K": st.column_config.LinkColumn("8-K", display_text="View")},
+                            column_config={
+                                "8-K": st.column_config.LinkColumn("8-K", display_text="View"),
+                                "Source": st.column_config.LinkColumn("Source", display_text="View"),
+                            },
                         )
                         with st.expander("Edit a saved combination"):
                             _se_opts  = {f"{r['company_name']}  (ID {r['id']})": r["id"] for _, r in _saved.iterrows()}
