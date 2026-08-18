@@ -3022,12 +3022,191 @@ if st.session_state.is_admin:
 
                 # ── Input: combinations still awaiting data ──────────────────
                 with _sub_input:
-                    st.caption("Select a combined SPAC, then scrape its Item 2.01 8-K for the "
-                               "combination date and post-combination company name. "
-                               "Saved entries move to the table tab.")
                     if _pending.empty:
                         st.info("No combinations awaiting data entry.")
                     else:
+                        # ── Batch auto-scrape (chunked to 10; durable skip-list) ──
+                        # Un-scrapeable combinations (no Item 2.01 8-K / no extractable
+                        # data) are marked in a persistent 'combination_scrape_attempted'
+                        # column so the batch advances through all of them once without
+                        # re-spending tokens. Falls back to a session-only skip-set if the
+                        # column hasn't been added to the ipos table yet.
+                        _CBATCH = 10
+                        _CATT   = "combination_scrape_attempted"
+                        _chas   = _CATT in _pending.columns
+                        if _chas:
+                            _cmask = _pending[_CATT].fillna(False).astype(bool)
+                        else:
+                            _csess = st.session_state.setdefault("comb_attempted", set())
+                            _cmask = _pending["id"].isin(_csess)
+                        _cfresh = _pending[~_cmask]
+                        _cbatch = _cfresh.head(_CBATCH)
+                        _ctried = int(_cmask.sum())
+                        _cscope = "" if _chas else " this session"
+
+                        st.markdown("##### Batch scrape")
+                        st.caption(
+                            f"{len(_pending)} pending · {_ctried} already tried{_cscope} · "
+                            f"{len(_cfresh)} left to try. Scrapes up to 10 untried SPACs per run; "
+                            "un-scrapeable ones are remembered so the batch keeps advancing without "
+                            "re-spending tokens on the same failures. Review and save the results below."
+                        )
+                        if not _chas:
+                            st.caption("⚠️ Tracking is session-only until the "
+                                       "`combination_scrape_attempted` (boolean) column is added to the "
+                                       "ipos table — add it so progress persists across sessions.")
+                        _cc1, _cc2, _cc3 = st.columns([2, 2, 2])
+                        with _cc1:
+                            _crun = st.button(
+                                f"🔍 Scrape next {len(_cbatch)}", key="comb_batch_scrape",
+                                type="primary", disabled=_cbatch.empty,
+                            )
+                        with _cc2:
+                            if st.session_state.get("comb_batch_results") and st.button(
+                                "Clear results", key="comb_batch_clear"
+                            ):
+                                st.session_state.pop("comb_batch_results", None)
+                                st.rerun()
+                        with _cc3:
+                            if _ctried > 0 and st.button(
+                                "↻ Retry tried", key="comb_batch_retry",
+                                help="Clear the skip-list and scrape the un-scrapeable ones again"
+                            ):
+                                if _chas:
+                                    try:
+                                        service_client().table("ipos").update(
+                                            {_CATT: False}).eq("outcome", "combination").execute()
+                                    except Exception:
+                                        pass
+                                st.session_state["comb_attempted"] = set()
+                                refresh()
+                                st.rerun()
+
+                        if _cbatch.empty and _ctried > 0:
+                            st.info(
+                                "Every pending combination has been tried. The ones still showing as "
+                                "pending couldn't be auto-scraped (often a new-CIK combination) — enter "
+                                "them manually below, or click “Retry tried” to run through them again."
+                            )
+
+                        if _crun:
+                            _cresults = []
+                            _crows = list(_cbatch.iterrows())
+                            _cprog = st.progress(0.0, text="Starting…")
+                            for _ci, (_, _cr) in enumerate(_crows):
+                                _cname = _cr.get("company_name", "") or ""
+                                _ccik  = _cr.get("cik")
+                                _cprog.progress(_ci / len(_crows), text=f"Scraping {_cname} ({_ci + 1}/{len(_crows)})…")
+                                _cent = {"id": int(_cr["id"]), "company": _cname, "cik": _ccik,
+                                         "combination_date": None, "post_combination_company_name": None,
+                                         "url": None, "error": None}
+                                if not _ccik:
+                                    _cent["error"] = "No CIK on record"
+                                else:
+                                    try:
+                                        _cinfo = find_first_combination_8k(str(_ccik), _cr.get("ipo_date"))
+                                        _curl  = _cinfo.get("combination_8k_url")
+                                        if not _curl:
+                                            _cent["error"] = "No Item 2.01 8-K found (may be a new-CIK combination)"
+                                        else:
+                                            _cext = extract_combination_from_8k(_curl)
+                                            _cent["url"] = _curl
+                                            _cent["combination_date"] = _cext.get("combination_date")
+                                            _cent["post_combination_company_name"] = _cext.get("post_combination_company_name")
+                                    except Exception as _ce:
+                                        _cent["error"] = str(_ce)[:200]
+                                _cresults.append(_cent)
+                                time.sleep(0.2)  # be polite to SEC between SPACs
+                            _cprog.progress(1.0, text="Done.")
+
+                            # Durably mark combinations that yielded no saveable data.
+                            _cmark = [e["id"] for e in _cresults
+                                      if e["error"] or (not e["combination_date"]
+                                                        and not e["post_combination_company_name"])]
+                            if _cmark:
+                                _cdone = False
+                                if _chas:
+                                    try:
+                                        service_client().table("ipos").update(
+                                            {_CATT: True}).in_("id", _cmark).execute()
+                                        _cdone = True
+                                    except Exception:
+                                        _cdone = False
+                                if not _cdone:
+                                    st.session_state.setdefault("comb_attempted", set()).update(_cmark)
+
+                            st.session_state["comb_batch_results"] = _cresults
+                            refresh()
+                            st.rerun()
+
+                        # ── Review + save the batch ──────────────────────────
+                        _cbres = st.session_state.get("comb_batch_results")
+                        if _cbres:
+                            _cok   = [b for b in _cbres if not b["error"]]
+                            _cerrs = [b for b in _cbres if b["error"]]
+                            if _cerrs:
+                                st.warning(
+                                    f"{len(_cerrs)} SPAC(s) couldn't be scraped automatically:\n\n"
+                                    + "\n".join(f"• {b['company']} — {b['error']}" for b in _cerrs)
+                                )
+                            if _cok:
+                                st.markdown("##### Review scraped results")
+                                st.caption("Edit any value, uncheck Save to skip a row, then click Save. "
+                                           "Blank cells mean nothing was found — fill them in or skip.")
+                                _ceditdf = pd.DataFrame([{
+                                    "Save": True,
+                                    "Company": b["company"],
+                                    "Combination Date": (
+                                        pd.to_datetime(b["combination_date"]).date()
+                                        if b["combination_date"] else None
+                                    ),
+                                    "Post-Combination Name": b["post_combination_company_name"] or "",
+                                    "8-K": b["url"] or "",
+                                } for b in _cok])
+                                _cedited = st.data_editor(
+                                    _ceditdf, hide_index=True, use_container_width=True, num_rows="fixed",
+                                    key="comb_batch_editor",
+                                    column_config={
+                                        "Save": st.column_config.CheckboxColumn("Save?", help="Uncheck to skip"),
+                                        "Company": st.column_config.TextColumn("Company", disabled=True),
+                                        "Combination Date": st.column_config.DateColumn(
+                                            "Combination Date", format="YYYY-MM-DD"),
+                                        "Post-Combination Name": st.column_config.TextColumn("Post-Combination Name"),
+                                        "8-K": st.column_config.LinkColumn("8-K", display_text="View", disabled=True),
+                                    },
+                                )
+                                if st.button("💾 Save all checked rows", key="comb_batch_save", type="primary"):
+                                    _cn, _cfails = 0, []
+                                    for _cidx, _cerow in _cedited.iterrows():
+                                        if not _cerow["Save"]:
+                                            continue
+                                        _ccd = _cerow["Combination Date"]
+                                        _cnm = _cerow["Post-Combination Name"]
+                                        _cpatch = {
+                                            "combination_date": (
+                                                pd.to_datetime(_ccd).date().isoformat() if pd.notna(_ccd) else None),
+                                            "post_combination_company_name": (str(_cnm).strip() or None),
+                                            "combination_8k_url": _cok[_cidx]["url"] or None,
+                                        }
+                                        try:
+                                            service_client().table("ipos").update(_cpatch).eq(
+                                                "id", _cok[_cidx]["id"]).execute()
+                                            _cn += 1
+                                        except Exception as _ce:
+                                            _cfails.append(f"{_cok[_cidx]['company']}: {_ce}")
+                                    st.session_state.pop("comb_batch_results", None)
+                                    if _cfails:
+                                        st.error(
+                                            "Some saves failed (ensure the combination_* columns exist):\n"
+                                            + "\n".join(_cfails)
+                                        )
+                                    else:
+                                        st.success(f"Saved {_cn} combination(s).")
+                                        refresh()
+                                        st.rerun()
+
+                        st.divider()
+                        st.markdown("##### Or scrape one at a time")
                         _pe_opts  = {f"{r['company_name']}  (ID {r['id']})": r["id"] for _, r in _pending.iterrows()}
                         _pe_label = st.selectbox("Select a combined SPAC", list(_pe_opts.keys()), key="comb_input_select")
                         _pe_row   = _pending[_pending["id"] == _pe_opts[_pe_label]].iloc[0]
