@@ -2908,6 +2908,7 @@ if st.session_state.is_admin:
         _nm_key  = f"comb_nm_{_comb_id}"
         _k8_key  = f"comb_8k_{_comb_id}"
         _src_key = f"comb_src_{_comb_id}"
+        _cik_key = f"comb_cik_{_comb_id}"
 
         # Scrape the earliest Item 2.01 8-K after the IPO date
         if st.button("Find & scrape combination 8-K", key=f"comb_scrape_{_comb_id}", type="primary"):
@@ -2964,6 +2965,13 @@ if st.session_state.is_admin:
         if _src_key not in st.session_state:
             _dbsrc = crow.get("combination_source_url")
             st.session_state[_src_key] = str(_dbsrc) if _dbsrc not in (None, "") and pd.notna(_dbsrc) else ""
+        if _cik_key not in st.session_state:
+            _dbcik = crow.get("combination_cik")
+            if _dbcik not in (None, "") and pd.notna(_dbcik):
+                st.session_state[_cik_key] = str(_dbcik)
+            else:
+                _spcik = crow.get("cik")
+                st.session_state[_cik_key] = str(_spcik) if _spcik not in (None, "") and pd.notna(_spcik) else ""
 
         fc1, fc2 = st.columns(2)
         with fc1:
@@ -2974,6 +2982,10 @@ if st.session_state.is_admin:
         with fc2:
             _nm_val = st.text_input("Post-combination company name", key=_nm_key)
 
+        _cik_val = st.text_input(
+            "Combination CIK (defaults to the SPAC's CIK — change if the combined company's differs)",
+            key=_cik_key,
+        )
         _k8_val  = st.text_input("8-K URL (edit if the detected filing is wrong)", key=_k8_key)
         _src_val = st.text_input(
             "Source URL (what you used to confirm)", key=_src_key,
@@ -2987,11 +2999,12 @@ if st.session_state.is_admin:
                     _patch = {
                         "combination_date":               _cd_val.isoformat() if _cd_val else None,
                         "post_combination_company_name":  _nm_val.strip() or None,
+                        "combination_cik":                _cik_val.strip() or None,
                         "combination_8k_url":             _k8_val.strip() or None,
                         "combination_source_url":         _src_val.strip() or None,
                     }
                     service_client().table("ipos").update(_patch).eq("id", _comb_id).execute()
-                    for _k in (f"comb_ext_{_comb_id}", _cd_key, _nm_key, _k8_key, _src_key):
+                    for _k in (f"comb_ext_{_comb_id}", _cd_key, _nm_key, _k8_key, _src_key, _cik_key):
                         st.session_state.pop(_k, None)
                     st.success("Saved.")
                     refresh()
@@ -3001,13 +3014,14 @@ if st.session_state.is_admin:
                         f"Could not save: {_e}\n\nEnsure the ipos table has columns "
                         "'combination_date' (date), "
                         "'post_combination_company_name' (text), "
+                        "'combination_cik' (text), "
                         "'combination_8k_url' (text), and "
                         "'combination_source_url' (text)."
                     )
         with bcol2:
             if st.button("Move to Searching", key=f"comb_reset_{_comb_id}",
                          help="Move back to the Searching tab"):
-                for _k in (f"comb_ext_{_comb_id}", _cd_key, _nm_key, _k8_key, _src_key):
+                for _k in (f"comb_ext_{_comb_id}", _cd_key, _nm_key, _k8_key, _src_key, _cik_key):
                     st.session_state.pop(_k, None)
                 _set_outcome(_comb_id, "searching")
 
@@ -3182,6 +3196,7 @@ if st.session_state.is_admin:
                                         if b["combination_date"] else None
                                     ),
                                     "Post-Combination Name": b["post_combination_company_name"] or "",
+                                    "Combination CIK": (str(b["cik"]) if b["cik"] not in (None, "") else ""),
                                     "8-K URL": b["url"] or "",
                                     "Source URL": "",
                                 } for b in _cok])
@@ -3194,6 +3209,8 @@ if st.session_state.is_admin:
                                         "Combination Date": st.column_config.DateColumn(
                                             "Combination Date", format="YYYY-MM-DD"),
                                         "Post-Combination Name": st.column_config.TextColumn("Post-Combination Name"),
+                                        "Combination CIK": st.column_config.TextColumn(
+                                            "Combination CIK", help="Defaults to the SPAC's CIK — change if it differs"),
                                         "8-K URL": st.column_config.LinkColumn(
                                             "8-K URL", help="Edit if the detected filing is wrong"),
                                         "Source URL": st.column_config.LinkColumn(
@@ -3207,12 +3224,14 @@ if st.session_state.is_admin:
                                             continue
                                         _ccd = _cerow["Combination Date"]
                                         _cnm = _cerow["Post-Combination Name"]
+                                        _ccik = _cerow["Combination CIK"]
                                         _c8k = _cerow["8-K URL"]
                                         _csrc = _cerow["Source URL"]
                                         _cpatch = {
                                             "combination_date": (
                                                 pd.to_datetime(_ccd).date().isoformat() if pd.notna(_ccd) else None),
                                             "post_combination_company_name": (str(_cnm).strip() or None),
+                                            "combination_cik": (str(_ccik).strip() if pd.notna(_ccik) and str(_ccik).strip() else None),
                                             "combination_8k_url": (str(_c8k).strip() if pd.notna(_c8k) and str(_c8k).strip() else None),
                                             "combination_source_url": (str(_csrc).strip() if pd.notna(_csrc) and str(_csrc).strip() else None),
                                         }
@@ -3250,7 +3269,8 @@ if st.session_state.is_admin:
                         _disp = pd.DataFrame({
                             "SPAC Name (at IPO)":        _saved["company_name"].values,
                             "Post-Combination Name":     _ccol("post_combination_company_name"),
-                            "CIK":                       _saved["cik"].values,
+                            "SPAC CIK":                  _saved["cik"].values,
+                            "Combination CIK":           _ccol("combination_cik"),
                             "IPO Date":                  _saved["ipo_date"].astype(str).str[:10].values,
                             "Combination Date":          _ccol("combination_date"),
                             "8-K":                       _ccol("combination_8k_url"),
