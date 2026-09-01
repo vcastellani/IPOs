@@ -2491,11 +2491,8 @@ if st.session_state.is_admin:
             if _searching.empty:
                 st.info("No SPACs currently marked as searching.")
             else:
-                _searching["_ipo_year"] = pd.to_datetime(
-                    _searching["ipo_date"], errors="coerce"
-                ).dt.year
                 _searching = _searching.sort_values(
-                    ["_ipo_year", "company_name"], ascending=[True, True], na_position="last"
+                    "company_name", key=lambda s: s.str.lower(), na_position="last"
                 )
                 st.caption(f"{len(_searching)} SPAC(s) currently searching.")
                 for _, _srow in _searching.iterrows():
