@@ -2488,9 +2488,29 @@ if st.session_state.is_admin:
             if _searching.empty:
                 st.info("No SPACs currently marked as searching.")
             else:
-                _searching = _searching.sort_values(
-                    "company_name", key=lambda s: s.str.lower(), na_position="last"
-                )
+                _sc1, _sc2 = st.columns([2, 3])
+                with _sc1:
+                    _s_sort = st.selectbox(
+                        "Sort by",
+                        ["Name (A–Z)", "IPO date (newest first)", "IPO date (oldest first)"],
+                        key="searching_sort",
+                    )
+                with _sc2:
+                    _s_filter = st.text_input(
+                        "Filter by company name", key="searching_filter", placeholder="Type to filter…"
+                    )
+                if _s_filter:
+                    _searching = _searching[
+                        _searching["company_name"].str.contains(_s_filter, case=False, na=False)
+                    ]
+                if _s_sort == "Name (A–Z)":
+                    _searching = _searching.sort_values(
+                        "company_name", key=lambda s: s.str.lower(), na_position="last"
+                    )
+                else:
+                    _searching = _searching.sort_values(
+                        "ipo_date", ascending=(_s_sort == "IPO date (oldest first)"), na_position="last"
+                    )
                 st.caption(f"{len(_searching)} SPAC(s) currently searching.")
                 for _, _srow in _searching.iterrows():
                     _sid = _srow["id"]
