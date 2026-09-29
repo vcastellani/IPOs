@@ -1350,6 +1350,7 @@ tr:nth-child(even) td{{background:{_LGRAY};}}
 .cik{{color:#555}}
 .right{{text-align:right}}
 .center{{text-align:center}}
+.status{{white-space:nowrap;padding-right:24px}}
 a{{color:{_GREEN};text-decoration:none;font-size:16px;}}
 </style></head><body>
 <div class="wrap"><table>
@@ -1382,7 +1383,7 @@ function render(){{
       <td class="cik">${{r.cik}}</td>
       <td>${{r.ipo_date||"—"}}</td>
       <td class="right">${{r.size_m!==null?fmt(r.size_m):"—"}}</td>
-      <td>${{r.status}}</td>
+      <td class="status">${{r.status}}</td>
       <td class="center">${{r.prospectus_url?`<a href="${{r.prospectus_url}}" target="_blank">📄</a>`:"—"}}</td>
       <td class="center">${{r.verified?"✅":"—"}}</td>
     </tr>`).join("");
