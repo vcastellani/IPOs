@@ -1229,7 +1229,6 @@ if "is_admin" not in st.session_state:
 
 with st.sidebar:
     st.title("📈 SPAC Tracker")
-    st.caption("Tracking Public SPAC Filings")
     st.divider()
 
     if not st.session_state.is_admin:
@@ -1249,18 +1248,20 @@ with st.sidebar:
 
     st.divider()
 
+    _NAV_OPTS = {
+        "ipos":         "📊 SPAC IPOs",
+        "combinations": "🔀 SPAC Combinations",
+        "audit":        "🔍 SPAC Audit Partners",
+    }
     st.markdown(
-        "<style>"
-        ".nav-link{display:block;padding:8px 12px;margin:2px 0;border-radius:6px;"
-        "color:#788C5D !important;font-weight:600;text-decoration:none !important;font-size:14px;}"
-        ".nav-link:hover{background:rgba(120,140,93,.1);}"
-        ".nav-dim{display:block;padding:8px 12px;margin:2px 0;border-radius:6px;"
-        "color:#AAA;font-weight:600;font-size:14px;cursor:default;}"
-        "</style>"
-        "<a class='nav-link' href='#spac-ipos'>📊 SPAC IPOs</a>"
-        "<span class='nav-dim'>🔀 SPAC Combinations</span>"
-        "<a class='nav-link' href='#spac-audit-partners'>🔍 SPAC Audit Partners</a>",
+        "<style>section[data-testid='stSidebar'] div[role='radiogroup'] label p"
+        "{font-weight:600;color:#788C5D;font-size:14px;}</style>",
         unsafe_allow_html=True,
+    )
+    _view = st.radio(
+        "Navigate", list(_NAV_OPTS.keys()),
+        format_func=lambda k: _NAV_OPTS[k],
+        label_visibility="collapsed", key="nav_view",
     )
 
     st.markdown(
@@ -1271,17 +1272,18 @@ with st.sidebar:
 
 
 
-st.markdown("<div id='spac-ipos'></div>", unsafe_allow_html=True)
-st.markdown(
-    "<p style='text-align:center;font-size:24px;font-weight:700;margin:0 0 12px;"
-    "font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#141413;'>"
-    "Special Purpose Acquisition Company (SPAC) IPOs</p>",
-    unsafe_allow_html=True,
-)
+if _view == "ipos":
+    st.markdown("<div id='spac-ipos'></div>", unsafe_allow_html=True)
+    st.markdown(
+        "<p style='text-align:center;font-size:24px;font-weight:700;margin:0 0 12px;"
+        "font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#141413;'>"
+        "Special Purpose Acquisition Company (SPAC) IPOs</p>",
+        unsafe_allow_html=True,
+    )
 
 df = load_ipos()
 
-if not df.empty:
+if _view == "ipos" and not df.empty:
     def _get_424b4_url(filings_val):
         if not filings_val:
             return None
@@ -1441,7 +1443,7 @@ else:
 
 df_all = load_ipos()
 df_dated = df_all[df_all["ipo_date"].notna()].copy()
-if not df_dated.empty:
+if _view == "ipos" and not df_dated.empty:
     df_dated["ipo_date"] = pd.to_datetime(df_dated["ipo_date"])
     yearly = (
         df_dated.groupby(df_dated["ipo_date"].dt.year)
@@ -1549,26 +1551,68 @@ if not df_dated.empty:
         )
     st.divider()
 
-# ── SPAC Combinations (coming soon) ───────────────────────────────────────────
+# ── SPAC Combinations ─────────────────────────────────────────────────────────
 
-st.markdown("<div id='spac-combinations'></div>", unsafe_allow_html=True)
-st.markdown(
-    "<h2 style='text-align:center;font-size:24px;"
-    "font-family:system-ui,-apple-system,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;'>"
-    "SPAC Combinations</h2>",
-    unsafe_allow_html=True,
-)
-st.markdown(
-    "<p style='text-align:center;color:#888;font-size:15px;"
-    "font-family:system-ui,-apple-system,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;'>"
-    "Coming Soon</p>",
-    unsafe_allow_html=True,
-)
-st.divider()
+if _view == "combinations":
+    st.markdown("<div id='spac-combinations'></div>", unsafe_allow_html=True)
+    st.markdown(
+        "<p style='text-align:center;font-size:24px;font-weight:700;margin:0 0 12px;"
+        "font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#141413;'>"
+        "SPAC Combinations</p>",
+        unsafe_allow_html=True,
+    )
+    if df.empty or "outcome" not in df.columns:
+        st.info("No combination data available yet.")
+    else:
+        _comb_pub = df[df["outcome"].astype(str).str.strip().str.lower() == "combination"].copy()
+        if "post_combination_company_name" in _comb_pub.columns or "combination_date" in _comb_pub.columns:
+            _cm = pd.Series(False, index=_comb_pub.index)
+            if "post_combination_company_name" in _comb_pub.columns:
+                _cm = _cm | _comb_pub["post_combination_company_name"].notna()
+            if "combination_date" in _comb_pub.columns:
+                _cm = _cm | _comb_pub["combination_date"].notna()
+            _comb_pub = _comb_pub[_cm]
+        if _comb_pub.empty:
+            st.info("No completed combinations recorded yet.")
+        else:
+            if "combination_date" in _comb_pub.columns:
+                _comb_pub = _comb_pub.sort_values("combination_date", ascending=False, na_position="last")
+            else:
+                _comb_pub = _comb_pub.sort_values("company_name")
+            _cf = st.text_input("Filter by company name", key="comb_pub_filter", placeholder="Type to filter…")
+            if _cf:
+                _cmask = _comb_pub["company_name"].str.contains(_cf, case=False, na=False)
+                if "post_combination_company_name" in _comb_pub.columns:
+                    _cmask = _cmask | _comb_pub["post_combination_company_name"].astype(str).str.contains(_cf, case=False, na=False)
+                _comb_pub = _comb_pub[_cmask]
+            def _cpub(name):
+                return _comb_pub[name].values if name in _comb_pub.columns else [None] * len(_comb_pub)
+            if "combination_cik" in _comb_pub.columns:
+                _cik_col = _comb_pub["combination_cik"].fillna(_comb_pub["cik"]).values
+            else:
+                _cik_col = _comb_pub["cik"].values
+            _disp_c = pd.DataFrame({
+                "SPAC (at IPO)":    _comb_pub["company_name"].values,
+                "Combined Company": _cpub("post_combination_company_name"),
+                "IPO Date":         _comb_pub["ipo_date"].astype(str).str[:10].values,
+                "Combination Date": _cpub("combination_date"),
+                "CIK":              _cik_col,
+                "8-K":              _cpub("combination_8k_url"),
+                "Source":           _cpub("combination_source_url"),
+            })
+            st.dataframe(
+                _disp_c, hide_index=True, use_container_width=True,
+                column_config={
+                    "8-K":    st.column_config.LinkColumn("8-K", display_text="View"),
+                    "Source": st.column_config.LinkColumn("Source", display_text="View"),
+                },
+            )
+            st.caption(f"{len(_disp_c)} combination(s).")
+    st.divider()
 
 # ── Detail view ───────────────────────────────────────────────────────────────
 
-if not df.empty:
+if _view == "ipos" and not df.empty:
     with st.expander("Detail View"):
         names  = sorted(df["company_name"].dropna().tolist())
         chosen = st.selectbox("Select a company", names, key="detail_select")
@@ -3305,84 +3349,85 @@ if st.session_state.is_admin:
 
 # ── SPAC Audit Partners ────────────────────────────────────────────────────────
 
-st.divider()
-st.markdown("<div id='spac-audit-partners'></div>", unsafe_allow_html=True)
-st.subheader("SPAC Audit Partners")
-st.caption("Audit engagement partners linked to SPACs in this database, sourced from PCAOB Form AP filings.")
+if _view == "audit":
+    st.divider()
+    st.markdown("<div id='spac-audit-partners'></div>", unsafe_allow_html=True)
+    st.subheader("SPAC Audit Partners")
+    st.caption("Audit engagement partners linked to SPACs in this database, sourced from PCAOB Form AP filings.")
 
-# Build display: join ipos audit_partner_id → pcaob_partners
-_ipos_all = load_ipos()
-_ipos_with_pid = _ipos_all[_ipos_all["audit_partner_id"].notna()][["company_name", "audit_partner_id", "ipo_date"]].copy()
+    # Build display: join ipos audit_partner_id → pcaob_partners
+    _ipos_all = load_ipos()
+    _ipos_with_pid = _ipos_all[_ipos_all["audit_partner_id"].notna()][["company_name", "audit_partner_id", "ipo_date"]].copy()
 
-if _ipos_with_pid.empty:
-    st.info("No SPACs in the database have an Audit Partner ID assigned yet.")
-else:
-    _partner_summary = (
-        _ipos_with_pid
-        .groupby("audit_partner_id")
-        .agg(
-            spac_count=("company_name", "count"),
-            companies=("company_name", lambda x: ", ".join(sorted(x))),
-            years=("ipo_date", lambda x: ", ".join(
-                sorted(set(str(pd.to_datetime(v).year) for v in x if pd.notna(v)))
-            )),
-        )
-        .reset_index()
-    )
-
-    _pcaob = load_spac_audit_partners()
-    if not _pcaob.empty:
-        _pcaob_cols = ["engagement_partner_id", "first_name", "middle_name", "last_name", "suffix"]
-        if "firm_name" in _pcaob.columns:
-            _pcaob_cols.append("firm_name")
-        _merged = _partner_summary.merge(
-            _pcaob[_pcaob_cols],
-            left_on="audit_partner_id",
-            right_on="engagement_partner_id",
-            how="left",
-        )
-
-        def _full_name(r):
-            parts = [r.get("first_name"), r.get("middle_name"), r.get("last_name"), r.get("suffix")]
-            name = " ".join(p for p in parts if pd.notna(p) and str(p).strip())
-            return name if name else f"ID: {r['audit_partner_id']}"
-
-        _merged["partner_name"] = _merged.apply(_full_name, axis=1)
-        _disp_cols = ["partner_name", "audit_partner_id"]
-        if "firm_name" in _merged.columns:
-            _disp_cols.append("firm_name")
-        _disp_cols += ["years", "spac_count", "companies"]
-        _display = _merged[_disp_cols].sort_values("spac_count", ascending=False)
-        st.dataframe(
-            _display,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "partner_name":     st.column_config.TextColumn("Partner Name"),
-                "audit_partner_id": st.column_config.TextColumn("Partner ID"),
-                "firm_name":        st.column_config.TextColumn("Firm"),
-                "years":            st.column_config.TextColumn("Year(s)"),
-                "spac_count":       st.column_config.NumberColumn("# SPACs", format="%.0f"),
-                "companies":        st.column_config.TextColumn("Companies"),
-            },
-        )
+    if _ipos_with_pid.empty:
+        st.info("No SPACs in the database have an Audit Partner ID assigned yet.")
     else:
-        # PCAOB table not populated yet — show IDs and counts only
-        _partner_summary_display = _partner_summary.sort_values("spac_count", ascending=False)
-        st.dataframe(
-            _partner_summary_display,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "audit_partner_id": st.column_config.TextColumn("Partner ID"),
-                "years":            st.column_config.TextColumn("Year(s)"),
-                "spac_count":       st.column_config.NumberColumn("# SPACs", format="%.0f"),
-                "companies":        st.column_config.TextColumn("Companies"),
-            },
+        _partner_summary = (
+            _ipos_with_pid
+            .groupby("audit_partner_id")
+            .agg(
+                spac_count=("company_name", "count"),
+                companies=("company_name", lambda x: ", ".join(sorted(x))),
+                years=("ipo_date", lambda x: ", ".join(
+                    sorted(set(str(pd.to_datetime(v).year) for v in x if pd.notna(v)))
+                )),
+            )
+            .reset_index()
         )
-        st.caption("Partner names not yet loaded. Use the Refresh button below to populate from PCAOB.")
 
-if st.session_state.is_admin:
+        _pcaob = load_spac_audit_partners()
+        if not _pcaob.empty:
+            _pcaob_cols = ["engagement_partner_id", "first_name", "middle_name", "last_name", "suffix"]
+            if "firm_name" in _pcaob.columns:
+                _pcaob_cols.append("firm_name")
+            _merged = _partner_summary.merge(
+                _pcaob[_pcaob_cols],
+                left_on="audit_partner_id",
+                right_on="engagement_partner_id",
+                how="left",
+            )
+
+            def _full_name(r):
+                parts = [r.get("first_name"), r.get("middle_name"), r.get("last_name"), r.get("suffix")]
+                name = " ".join(p for p in parts if pd.notna(p) and str(p).strip())
+                return name if name else f"ID: {r['audit_partner_id']}"
+
+            _merged["partner_name"] = _merged.apply(_full_name, axis=1)
+            _disp_cols = ["partner_name", "audit_partner_id"]
+            if "firm_name" in _merged.columns:
+                _disp_cols.append("firm_name")
+            _disp_cols += ["years", "spac_count", "companies"]
+            _display = _merged[_disp_cols].sort_values("spac_count", ascending=False)
+            st.dataframe(
+                _display,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "partner_name":     st.column_config.TextColumn("Partner Name"),
+                    "audit_partner_id": st.column_config.TextColumn("Partner ID"),
+                    "firm_name":        st.column_config.TextColumn("Firm"),
+                    "years":            st.column_config.TextColumn("Year(s)"),
+                    "spac_count":       st.column_config.NumberColumn("# SPACs", format="%.0f"),
+                    "companies":        st.column_config.TextColumn("Companies"),
+                },
+            )
+        else:
+            # PCAOB table not populated yet — show IDs and counts only
+            _partner_summary_display = _partner_summary.sort_values("spac_count", ascending=False)
+            st.dataframe(
+                _partner_summary_display,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "audit_partner_id": st.column_config.TextColumn("Partner ID"),
+                    "years":            st.column_config.TextColumn("Year(s)"),
+                    "spac_count":       st.column_config.NumberColumn("# SPACs", format="%.0f"),
+                    "companies":        st.column_config.TextColumn("Companies"),
+                },
+            )
+            st.caption("Partner names not yet loaded. Use the Refresh button below to populate from PCAOB.")
+
+if _view == "audit" and st.session_state.is_admin:
     st.markdown("**Refresh PCAOB Partner Data**")
     st.caption("Downloads Form AP data from PCAOB and upserts unique engagement partners into the database. Run monthly.")
     if st.button("Refresh PCAOB Data", key="refresh_pcaob"):
