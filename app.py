@@ -1354,6 +1354,7 @@ tr:nth-child(even) td{{background:{_LGRAY};}}
 .cik{{color:#555}}
 .right{{text-align:right}}
 .center{{text-align:center}}
+.status{{white-space:nowrap;padding-right:24px}}
 a{{color:{_GREEN};text-decoration:none;font-size:16px;}}
 </style></head><body>
 <div class="wrap"><table>
@@ -1386,7 +1387,7 @@ function render(){{
       <td class="cik">${{r.cik}}</td>
       <td>${{r.ipo_date||"—"}}</td>
       <td class="right">${{r.size_m!==null?fmt(r.size_m):"—"}}</td>
-      <td>${{r.status}}</td>
+      <td class="status">${{r.status}}</td>
       <td class="center">${{r.prospectus_url?`<a href="${{r.prospectus_url}}" target="_blank">📄</a>`:"—"}}</td>
       <td class="center">${{r.verified?"✅":"—"}}</td>
     </tr>`).join("");
@@ -1440,7 +1441,7 @@ render();
                 file_name="spac_tracker_full.csv",
                 mime="text/csv",
             )
-else:
+elif _view == "ipos":
     st.info("No filings yet. Log in as admin to add entries.")
 
 # ── Analytics ─────────────────────────────────────────────────────────────────
@@ -1589,29 +1590,104 @@ if _view == "combinations":
                 if "post_combination_company_name" in _comb_pub.columns:
                     _cmask = _cmask | _comb_pub["post_combination_company_name"].astype(str).str.contains(_cf, case=False, na=False)
                 _comb_pub = _comb_pub[_cmask]
-            def _cpub(name):
-                return _comb_pub[name].values if name in _comb_pub.columns else [None] * len(_comb_pub)
-            if "combination_cik" in _comb_pub.columns:
-                _cik_col = _comb_pub["combination_cik"].fillna(_comb_pub["cik"]).values
-            else:
-                _cik_col = _comb_pub["cik"].values
-            _disp_c = pd.DataFrame({
-                "SPAC (at IPO)":    _comb_pub["company_name"].values,
-                "Combined Company": _cpub("post_combination_company_name"),
-                "IPO Date":         _comb_pub["ipo_date"].astype(str).str[:10].values,
-                "Combination Date": _cpub("combination_date"),
-                "CIK":              _cik_col,
-                "8-K":              _cpub("combination_8k_url"),
-                "Source":           _cpub("combination_source_url"),
-            })
-            st.dataframe(
-                _disp_c, hide_index=True, use_container_width=True,
-                column_config={
-                    "8-K":    st.column_config.LinkColumn("8-K", display_text="View"),
-                    "Source": st.column_config.LinkColumn("Source", display_text="View"),
-                },
-            )
-            st.caption(f"{len(_disp_c)} combination(s).")
+
+            def _cval(r, name):
+                v = r.get(name)
+                if v is None or (isinstance(v, float) and pd.isna(v)):
+                    return ""
+                return str(v)
+
+            _rows_c = []
+            for _, r in _comb_pub.iterrows():
+                _rcik = _cval(r, "combination_cik") or _cval(r, "cik")
+                _rows_c.append({
+                    "spac":      _cval(r, "company_name"),
+                    "combined":  _cval(r, "post_combination_company_name"),
+                    "ipo_date":  _cval(r, "ipo_date")[:10],
+                    "comb_date": _cval(r, "combination_date")[:10],
+                    "cik":       _rcik,
+                    "eightk":    _cval(r, "combination_8k_url"),
+                    "source":    _cval(r, "combination_source_url"),
+                })
+            _cjson = json.dumps(_rows_c)
+
+            _GREEN = "#788C5D"
+            _IVORY = "#FAF9F5"
+            _LGRAY = "#F0EEE6"
+            _TEXT  = "#141413"
+            _FONT  = "system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
+
+            _ctable = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:{_FONT};background:transparent;}}
+.wrap{{border-radius:8px;border:1px solid #E7E0D8;box-shadow:0 2px 8px rgba(0,0,0,.07);
+       height:470px;overflow-y:auto;overflow-x:auto;}}
+table{{width:100%;border-collapse:collapse;min-width:760px;}}
+th{{padding:11px 16px;text-align:left;font-weight:700;color:#fff;font-size:13.5px;
+    white-space:nowrap;cursor:pointer;user-select:none;
+    position:sticky;top:0;z-index:1;background:{_GREEN};}}
+th:hover{{background:#6a7d51;}}
+th.sort-none .arr::before{{content:"↕";opacity:.5}}
+th.sort-asc  .arr::before{{content:"▲"}}
+th.sort-desc .arr::before{{content:"▼"}}
+th .arr{{margin-left:5px;font-size:10px;}}
+td{{padding:10px 16px;color:{_TEXT};font-size:13.5px;border:none;white-space:nowrap;}}
+tr:nth-child(odd)  td{{background:{_IVORY};}}
+tr:nth-child(even) td{{background:{_LGRAY};}}
+.company{{font-weight:600}}
+.cik{{color:#555}}
+.center{{text-align:center}}
+a{{color:{_GREEN};text-decoration:none;font-size:16px;}}
+</style></head><body>
+<div class="wrap"><table>
+<thead><tr>
+  <th data-col="spac"      data-type="str"  class="sort-none">SPAC (at IPO)<span class="arr"></span></th>
+  <th data-col="combined"  data-type="str"  class="sort-none">Combined Company<span class="arr"></span></th>
+  <th data-col="ipo_date"  data-type="str"  class="sort-none">IPO Date<span class="arr"></span></th>
+  <th data-col="comb_date" data-type="str"  class="sort-desc">Combination Date<span class="arr"></span></th>
+  <th data-col="cik"       data-type="num"  class="sort-none">CIK<span class="arr"></span></th>
+  <th data-col="none"      data-type="none" class="sort-none" style="cursor:default">8-K<span class="arr"></span></th>
+  <th data-col="none"      data-type="none" class="sort-none" style="cursor:default">Source<span class="arr"></span></th>
+</tr></thead>
+<tbody id="tbody"></tbody>
+</table></div>
+<script>
+const DATA={_cjson};
+let col="comb_date",asc=false;
+function render(){{
+  const rows=[...DATA].sort((a,b)=>{{
+    let va=a[col],vb=b[col];
+    const empa=(va===""||va===null),empb=(vb===""||vb===null);
+    if(empa&&empb)return 0;
+    if(empa)return 1;if(empb)return -1;
+    if(col==="cik"){{va=Number(va);vb=Number(vb);return asc?va-vb:vb-va;}}
+    return asc?String(va).localeCompare(String(vb)):String(vb).localeCompare(String(va));
+  }});
+  document.getElementById("tbody").innerHTML=rows.map(r=>
+    `<tr>
+      <td class="company">${{r.spac||"—"}}</td>
+      <td>${{r.combined||"—"}}</td>
+      <td>${{r.ipo_date||"—"}}</td>
+      <td>${{r.comb_date||"—"}}</td>
+      <td class="cik">${{r.cik||"—"}}</td>
+      <td class="center">${{r.eightk?`<a href="${{r.eightk}}" target="_blank">📄</a>`:"—"}}</td>
+      <td class="center">${{r.source?`<a href="${{r.source}}" target="_blank">🔗</a>`:"—"}}</td>
+    </tr>`).join("");
+}}
+document.querySelectorAll("th").forEach(th=>{{
+  if(th.dataset.type==="none")return;
+  th.addEventListener("click",()=>{{
+    const c=th.dataset.col;
+    if(col===c){{asc=!asc;}}else{{col=c;asc=true;}}
+    document.querySelectorAll("th").forEach(h=>h.className="sort-none");
+    th.className=asc?"sort-asc":"sort-desc";
+    render();
+  }});
+}});
+render();
+</script></body></html>"""
+            components.html(_ctable, height=490, scrolling=False)
+            st.caption(f"{len(_rows_c)} combination(s) shown")
     st.divider()
 
 # ── Detail view ───────────────────────────────────────────────────────────────
